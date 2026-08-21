@@ -3,6 +3,14 @@ import os
 import requests
 import streamlit as st
 
+from dotenv import load_dotenv
+
+
+# ============================================================
+# LOAD ENVIRONMENT VARIABLES
+# ============================================================
+
+load_dotenv()
 
 # ============================================================
 # BACKEND URL
