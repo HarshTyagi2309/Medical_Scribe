@@ -1,0 +1,11 @@
+fastapi==0.141.1
+uvicorn==0.52.4
+streamlit==1.62.0
+groq==1.6.0
+langfuse==4.14.4
+python-dotenv==1.2.3
+sqlalchemy==2.0.52
+pydantic==2.13.4
+python-multipart==0.0.32
+requests==2.34.2
+httpx==0.28.1
