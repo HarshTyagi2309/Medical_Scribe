@@ -1,9 +1,11 @@
 import os
+from io import BytesIO
 
 import requests
 import streamlit as st
 
 from dotenv import load_dotenv
+from handsfree_recorder import render_handsfree_recorder
 
 
 # ============================================================
@@ -12,15 +14,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 # ============================================================
 # BACKEND URL
 # ============================================================
 
 def get_fastapi_url():
-
-    # --------------------------------------------------------
-    # 1. Normal environment variable
-    # --------------------------------------------------------
 
     environment_url = os.getenv(
         "FASTAPI_URL",
@@ -33,11 +32,6 @@ def get_fastapi_url():
             environment_url
             .rstrip("/")
         )
-
-
-    # --------------------------------------------------------
-    # 2. Streamlit Cloud secrets
-    # --------------------------------------------------------
 
     try:
 
@@ -59,11 +53,6 @@ def get_fastapi_url():
     except Exception:
 
         pass
-
-
-    # --------------------------------------------------------
-    # 3. Local development
-    # --------------------------------------------------------
 
     return (
         "http://127.0.0.1:8000"
@@ -101,6 +90,7 @@ DEFAULTS = {
     "consultation_date": "",
     "consultation_time": "",
     "input_version": 0,
+    "pending_handsfree_audio": None,
 }
 
 
@@ -120,22 +110,15 @@ for key, value in DEFAULTS.items():
 def reset_consultation():
 
     st.session_state.record_id = None
-
     st.session_state.patient_name = ""
-
     st.session_state.patient_id = ""
-
     st.session_state.session_id = ""
-
     st.session_state.transcript = ""
-
     st.session_state.clinical_data = {}
-
     st.session_state.consultation_date = ""
-
     st.session_state.consultation_time = ""
-
     st.session_state.input_version += 1
+    st.session_state.pending_handsfree_audio = None
 
 
 # ============================================================
@@ -186,6 +169,7 @@ def load_record(
     )
 
     st.session_state.clinical_data = {
+
         "patient_name": (
             record.get(
                 "patient_name"
@@ -249,12 +233,16 @@ def load_record(
 
 
 # ============================================================
-# CSS
+# RESPONSIVE CSS
 # ============================================================
 
 st.markdown(
     """
     <style>
+
+    /* ======================================================
+       DESKTOP / GLOBAL
+       ====================================================== */
 
     .stApp {
         background:
@@ -275,23 +263,34 @@ st.markdown(
             );
     }
 
+
     .block-container {
         max-width: 1450px;
         padding-top: 1.4rem;
         padding-bottom: 2rem;
+        padding-left: 2rem;
+        padding-right: 2rem;
     }
+
 
     #MainMenu {
         visibility: hidden;
     }
 
+
     footer {
         visibility: hidden;
     }
 
+
     header {
         visibility: hidden;
     }
+
+
+    /* ======================================================
+       CARDS
+       ====================================================== */
 
     [data-testid="stVerticalBlockBorderWrapper"] {
         border-radius: 20px;
@@ -300,39 +299,286 @@ st.markdown(
                 255,
                 255,
                 255,
-                0.78
+                0.82
             );
     }
+
+
+    /* ======================================================
+       METRICS
+       ====================================================== */
 
     [data-testid="stMetric"] {
         background: white;
         border: 1px solid #e2e8f0;
         border-radius: 18px;
         padding: 18px;
+        width: 100%;
     }
+
+
+    /* ======================================================
+       FILE UPLOADER
+       ====================================================== */
 
     [data-testid="stFileUploader"] {
         background: white;
         border: 1px dashed #94a3b8;
         border-radius: 18px;
         padding: 10px;
+        width: 100%;
     }
+
+
+    /* ======================================================
+       TEXT AREA
+       ====================================================== */
 
     [data-testid="stTextArea"] textarea {
         border-radius: 16px;
         background: #f8fafc;
         border: 1px solid #e2e8f0;
         line-height: 1.6;
+        width: 100%;
     }
+
+
+    /* ======================================================
+       BUTTONS
+       ====================================================== */
 
     .stButton > button {
         min-height: 46px;
         border-radius: 14px;
         font-weight: 700;
+        width: 100%;
     }
+
+
+    /* ======================================================
+       ALERTS
+       ====================================================== */
 
     [data-testid="stAlert"] {
         border-radius: 16px;
+    }
+
+
+    /* ======================================================
+       AUDIO
+       ====================================================== */
+
+    audio {
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+
+
+    /* ======================================================
+       WEBRTC
+       ====================================================== */
+
+    iframe {
+        max-width: 100% !important;
+    }
+
+
+    /* ======================================================
+       TABS
+       ====================================================== */
+
+    [data-baseweb="tab-list"] {
+        gap: 8px;
+        overflow-x: auto;
+        scrollbar-width: thin;
+    }
+
+
+    [data-baseweb="tab"] {
+        white-space: nowrap;
+    }
+
+
+    /* ======================================================
+       MOBILE
+       ====================================================== */
+
+    @media screen and (max-width: 768px) {
+
+        .block-container {
+            padding-top: 0.8rem !important;
+            padding-bottom: 1.5rem !important;
+            padding-left: 0.75rem !important;
+            padding-right: 0.75rem !important;
+        }
+
+
+        h1 {
+            font-size: 1.8rem !important;
+            line-height: 1.2 !important;
+        }
+
+
+        h2 {
+            font-size: 1.35rem !important;
+        }
+
+
+        h3 {
+            font-size: 1.15rem !important;
+        }
+
+
+        /* ==================================================
+           STACK STREAMLIT COLUMNS
+           ================================================== */
+
+        [data-testid="stHorizontalBlock"] {
+            flex-wrap: wrap !important;
+            gap: 0.75rem !important;
+        }
+
+
+        [data-testid="column"] {
+            width: 100% !important;
+            flex: 1 1 100% !important;
+            min-width: 100% !important;
+        }
+
+
+        /* ==================================================
+           CARDS
+           ================================================== */
+
+        [data-testid="stVerticalBlockBorderWrapper"] {
+            border-radius: 14px !important;
+        }
+
+
+        /* ==================================================
+           METRICS
+           ================================================== */
+
+        [data-testid="stMetric"] {
+            padding: 12px !important;
+            border-radius: 14px !important;
+        }
+
+
+        [data-testid="stMetricLabel"] {
+            font-size: 0.8rem !important;
+        }
+
+
+        [data-testid="stMetricValue"] {
+            font-size: 1.2rem !important;
+        }
+
+
+        /* ==================================================
+           BUTTONS
+           ================================================== */
+
+        .stButton > button {
+            width: 100% !important;
+            min-height: 48px !important;
+            font-size: 0.95rem !important;
+        }
+
+
+        /* ==================================================
+           INPUTS
+           ================================================== */
+
+        input,
+        textarea {
+            font-size: 16px !important;
+        }
+
+
+        /* ==================================================
+           TRANSCRIPT
+           ================================================== */
+
+        [data-testid="stTextArea"] textarea {
+            min-height: 240px !important;
+        }
+
+
+        /* ==================================================
+           TABS
+           ================================================== */
+
+        [data-baseweb="tab-list"] {
+            overflow-x: auto !important;
+            display: flex !important;
+            flex-wrap: nowrap !important;
+        }
+
+
+        [data-baseweb="tab"] {
+            min-width: max-content !important;
+            padding-left: 12px !important;
+            padding-right: 12px !important;
+        }
+
+
+        /* ==================================================
+           FILE UPLOAD
+           ================================================== */
+
+        [data-testid="stFileUploader"] {
+            padding: 8px !important;
+        }
+
+
+        /* ==================================================
+           EXPANDERS
+           ================================================== */
+
+        [data-testid="stExpander"] {
+            width: 100% !important;
+        }
+
+
+        /* ==================================================
+           WEBRTC
+           ================================================== */
+
+        iframe {
+            width: 100% !important;
+            max-width: 100% !important;
+        }
+
+    }
+
+
+    /* ======================================================
+       SMALL PHONES
+       ====================================================== */
+
+    @media screen and (max-width: 480px) {
+
+        .block-container {
+            padding-left: 0.5rem !important;
+            padding-right: 0.5rem !important;
+        }
+
+
+        h1 {
+            font-size: 1.55rem !important;
+        }
+
+
+        p {
+            font-size: 0.92rem !important;
+        }
+
+
+        [data-testid="stMetric"] {
+            padding: 10px !important;
+        }
+
     }
 
     </style>
@@ -400,24 +646,45 @@ with st.container(
         "store the consultation."
     )
 
+
     h1, h2, h3, h4, h5 = (
         st.columns(5)
     )
 
+
     with h1:
-        st.caption("🎙️ Record")
+
+        st.caption(
+            "🎙️ Record"
+        )
+
 
     with h2:
-        st.caption("📝 Transcribe")
+
+        st.caption(
+            "📝 Transcribe"
+        )
+
 
     with h3:
-        st.caption("🧠 Extract")
+
+        st.caption(
+            "🧠 Extract"
+        )
+
 
     with h4:
-        st.caption("💾 Store")
+
+        st.caption(
+            "💾 Store"
+        )
+
 
     with h5:
-        st.caption("📊 Observe")
+
+        st.caption(
+            "📊 Observe"
+        )
 
 
 st.write("")
@@ -441,6 +708,10 @@ left_col, right_col = (
 
 with left_col:
 
+    # ========================================================
+    # NEW CONSULTATION
+    # ========================================================
+
     with st.container(
         border=True
     ):
@@ -455,10 +726,15 @@ with left_col:
         )
 
 
-        record_tab, upload_tab = (
+        # ====================================================
+        # INPUT TABS
+        # ====================================================
+
+        handsfree_tab, record_tab, upload_tab = (
             st.tabs(
                 [
-                    "🎙️ Record Live",
+                    "🗣️ Hands-Free",
+                    "🎙️ Manual Record",
                     "📁 Upload Audio",
                 ]
             )
@@ -468,6 +744,19 @@ with left_col:
         recorded_audio = None
         uploaded_audio = None
 
+
+        # ====================================================
+        # HANDS FREE
+        # ====================================================
+
+        with handsfree_tab:
+
+            render_handsfree_recorder()
+
+
+        # ====================================================
+        # MANUAL RECORD
+        # ====================================================
 
         with record_tab:
 
@@ -485,12 +774,17 @@ with left_col:
                 )
             )
 
+
             if recorded_audio:
 
                 st.audio(
                     recorded_audio
                 )
 
+
+        # ====================================================
+        # UPLOAD
+        # ====================================================
 
         with upload_tab:
 
@@ -514,6 +808,7 @@ with left_col:
                 )
             )
 
+
             if uploaded_audio:
 
                 st.audio(
@@ -528,22 +823,66 @@ with left_col:
         audio_source = None
         audio_name = None
         audio_type = None
+        auto_analyze = False
 
 
-        if recorded_audio:
+        pending_handsfree_audio = (
+            st.session_state.get(
+                "pending_handsfree_audio"
+            )
+        )
+
+
+        # ====================================================
+        # HANDS FREE AUDIO
+        # ====================================================
+
+        if pending_handsfree_audio:
 
             audio_source = (
-                recorded_audio
+                BytesIO(
+                    pending_handsfree_audio
+                )
             )
 
+
             audio_name = (
-                "recorded_consultation.wav"
+                "handsfree_consultation.wav"
             )
+
 
             audio_type = (
                 "audio/wav"
             )
 
+
+            auto_analyze = True
+
+
+        # ====================================================
+        # MANUAL AUDIO
+        # ====================================================
+
+        elif recorded_audio:
+
+            audio_source = (
+                recorded_audio
+            )
+
+
+            audio_name = (
+                "recorded_consultation.wav"
+            )
+
+
+            audio_type = (
+                "audio/wav"
+            )
+
+
+        # ====================================================
+        # UPLOADED AUDIO
+        # ====================================================
 
         elif uploaded_audio:
 
@@ -551,9 +890,11 @@ with left_col:
                 uploaded_audio
             )
 
+
             audio_name = (
                 uploaded_audio.name
             )
+
 
             audio_type = (
                 uploaded_audio.type
@@ -561,10 +902,22 @@ with left_col:
             )
 
 
-        analyze = st.button(
-            "✨ Analyze & Save Consultation",
-            type="primary",
-            use_container_width=True,
+        # ====================================================
+        # ANALYZE BUTTON
+        # ====================================================
+
+        manual_analyze = (
+            st.button(
+                "✨ Analyze & Save Consultation",
+                type="primary",
+                use_container_width=True,
+            )
+        )
+
+
+        analyze = (
+            manual_analyze
+            or auto_analyze
         )
 
 
@@ -581,6 +934,7 @@ with left_col:
                     "consultation audio first."
                 )
 
+
             else:
 
                 try:
@@ -590,13 +944,19 @@ with left_col:
                         "and saving consultation..."
                     ):
 
+
                         files = {
+
                             "audio": (
+
                                 audio_name,
+
                                 audio_source.getvalue(),
+
                                 audio_type,
                             )
                         }
+
 
                         response = (
                             requests.post(
@@ -613,6 +973,10 @@ with left_col:
                         )
 
 
+                    # ========================================
+                    # SUCCESS
+                    # ========================================
+
                     if (
                         response.status_code
                         == 200
@@ -623,6 +987,10 @@ with left_col:
                         )
 
 
+                        # ====================================
+                        # DUPLICATE
+                        # ====================================
+
                         if result.get(
                             "duplicate"
                         ):
@@ -632,11 +1000,16 @@ with left_col:
                                 "has already been processed."
                             )
 
+
                             st.info(
                                 "Existing Record ID: "
                                 f"{result.get('record_id')}"
                             )
 
+
+                        # ====================================
+                        # NEW RECORD
+                        # ====================================
 
                         else:
 
@@ -646,12 +1019,14 @@ with left_col:
                                 )
                             )
 
+
                             st.session_state.patient_name = (
                                 result.get(
                                     "patient_name",
                                     "Not in audio",
                                 )
                             )
+
 
                             st.session_state.patient_id = (
                                 result.get(
@@ -660,12 +1035,14 @@ with left_col:
                                 )
                             )
 
+
                             st.session_state.session_id = (
                                 result.get(
                                     "session_id",
                                     "",
                                 )
                             )
+
 
                             st.session_state.transcript = (
                                 result.get(
@@ -674,12 +1051,14 @@ with left_col:
                                 )
                             )
 
+
                             st.session_state.clinical_data = (
                                 result.get(
                                     "clinical_data",
                                     {},
                                 )
                             )
+
 
                             st.session_state.consultation_date = (
                                 result.get(
@@ -688,6 +1067,7 @@ with left_col:
                                 )
                             )
 
+
                             st.session_state.consultation_time = (
                                 result.get(
                                     "consultation_time",
@@ -695,66 +1075,57 @@ with left_col:
                                 )
                             )
 
+
                             st.success(
                                 "Consultation analyzed "
                                 "and saved successfully."
                             )
 
 
+                    # ========================================
+                    # ERROR
+                    # ========================================
+
                     else:
 
-                        try:
-
-                            error_message = (
-                                response.json()
-                                .get(
-                                    "detail",
-                                    "Processing failed.",
-                                )
-                            )
-
-                        except Exception:
-
-                            error_message = (
-                                "Processing failed."
-                            )
-
-
-                        st.error(
-                            error_message
+                        print(
+                            "Consultation processing failed:",
+                            response.status_code,
+                            response.text,
                         )
 
 
-                except (
-                    requests.exceptions
-                    .ConnectionError
-                ):
-
-                    st.error(
-                        "Medical Scribe backend "
-                        "could not be reached."
-                    )
-
-
-                except (
-                    requests.exceptions
-                    .Timeout
-                ):
-
-                    st.error(
-                        "Processing took too long."
-                    )
+                        st.error(
+                            "Please try again after some time."
+                        )
 
 
                 except Exception as error:
 
-                    st.error(
-                        f"Error: {str(error)}"
+                    print(
+                        "Consultation processing error:",
+                        repr(
+                            error
+                        ),
                     )
 
 
+                    st.error(
+                        "Please try again after some time."
+                    )
+
+
+                finally:
+
+                    if auto_analyze:
+
+                        st.session_state[
+                            "pending_handsfree_audio"
+                        ] = None
+
+
     # ========================================================
-    # RECORD INFO
+    # PATIENT INFORMATION
     # ========================================================
 
     with st.container(
@@ -767,7 +1138,9 @@ with left_col:
 
 
         p1, p2 = (
-            st.columns(2)
+            st.columns(
+                2
+            )
         )
 
 
@@ -796,7 +1169,9 @@ with left_col:
 
 
         r1, r2, r3 = (
-            st.columns(3)
+            st.columns(
+                3
+            )
         )
 
 
@@ -867,6 +1242,7 @@ with left_col:
                 label_visibility="collapsed",
             )
 
+
         else:
 
             st.info(
@@ -884,11 +1260,18 @@ with right_col:
         st.session_state.clinical_data
     )
 
-    vitals = clinical.get(
-        "vitals",
-        {},
+
+    vitals = (
+        clinical.get(
+            "vitals",
+            {},
+        )
     )
 
+
+    # ========================================================
+    # VITALS
+    # ========================================================
 
     with st.container(
         border=True
@@ -898,7 +1281,13 @@ with right_col:
             "❤️ Patient Vitals"
         )
 
-        v1, v2 = st.columns(2)
+
+        v1, v2 = (
+            st.columns(
+                2
+            )
+        )
+
 
         with v1:
 
@@ -913,6 +1302,7 @@ with right_col:
                 ),
             )
 
+
         with v2:
 
             st.metric(
@@ -926,7 +1316,13 @@ with right_col:
                 ),
             )
 
-        v3, v4 = st.columns(2)
+
+        v3, v4 = (
+            st.columns(
+                2
+            )
+        )
+
 
         with v3:
 
@@ -940,6 +1336,7 @@ with right_col:
                     or "—"
                 ),
             )
+
 
         with v4:
 
@@ -955,6 +1352,10 @@ with right_col:
             )
 
 
+    # ========================================================
+    # DIAGNOSIS
+    # ========================================================
+
     with st.container(
         border=True
     ):
@@ -963,11 +1364,13 @@ with right_col:
             "🩺 Disease / Diagnosis"
         )
 
+
         diagnosis = (
             clinical.get(
                 "diagnosis"
             )
         )
+
 
         if diagnosis:
 
@@ -975,12 +1378,17 @@ with right_col:
                 diagnosis
             )
 
+
         else:
 
             st.info(
                 "No diagnosis explicitly mentioned."
             )
 
+
+    # ========================================================
+    # CHIEF COMPLAINT
+    # ========================================================
 
     with st.container(
         border=True
@@ -990,6 +1398,7 @@ with right_col:
             "🗣️ Chief Complaint"
         )
 
+
         st.write(
             clinical.get(
                 "chief_complaint"
@@ -997,6 +1406,10 @@ with right_col:
             or "Not mentioned"
         )
 
+
+    # ========================================================
+    # SYMPTOMS
+    # ========================================================
 
     with st.container(
         border=True
@@ -1006,12 +1419,14 @@ with right_col:
             "🤒 Symptoms"
         )
 
+
         symptoms = (
             clinical.get(
                 "symptoms",
                 [],
             )
         )
+
 
         if symptoms:
 
@@ -1021,12 +1436,17 @@ with right_col:
                     f"• {symptom}"
                 )
 
+
         else:
 
             st.info(
                 "No symptoms extracted."
             )
 
+
+    # ========================================================
+    # MEDICINES
+    # ========================================================
 
     with st.container(
         border=True
@@ -1036,12 +1456,14 @@ with right_col:
             "💊 Medicines"
         )
 
+
         medications = (
             clinical.get(
                 "medications",
                 [],
             )
         )
+
 
         if medications:
 
@@ -1050,18 +1472,26 @@ with right_col:
                 1,
             ):
 
+
                 st.markdown(
                     f"**{index}. "
                     f"{medicine.get('name')}**"
                 )
 
-                m1, m2 = st.columns(2)
+
+                m1, m2 = (
+                    st.columns(
+                        2
+                    )
+                )
+
 
                 with m1:
 
                     st.caption(
                         "Dosage"
                     )
+
 
                     st.write(
                         medicine.get(
@@ -1070,9 +1500,11 @@ with right_col:
                         or "—"
                     )
 
+
                     st.caption(
                         "Frequency"
                     )
+
 
                     st.write(
                         medicine.get(
@@ -1081,11 +1513,13 @@ with right_col:
                         or "—"
                     )
 
+
                 with m2:
 
                     st.caption(
                         "Duration"
                     )
+
 
                     st.write(
                         medicine.get(
@@ -1094,9 +1528,11 @@ with right_col:
                         or "—"
                     )
 
+
                     st.caption(
                         "Route"
                     )
+
 
                     st.write(
                         medicine.get(
@@ -1105,12 +1541,16 @@ with right_col:
                         or "—"
                     )
 
+
                 if (
                     index
-                    < len(medications)
+                    < len(
+                        medications
+                    )
                 ):
 
                     st.divider()
+
 
         else:
 
@@ -1118,6 +1558,10 @@ with right_col:
                 "No medicines extracted."
             )
 
+
+    # ========================================================
+    # TESTS
+    # ========================================================
 
     with st.container(
         border=True
@@ -1127,12 +1571,14 @@ with right_col:
             "🧪 Recommended Tests"
         )
 
+
         tests = (
             clinical.get(
                 "recommended_tests",
                 [],
             )
         )
+
 
         if tests:
 
@@ -1142,12 +1588,17 @@ with right_col:
                     f"• {test}"
                 )
 
+
         else:
 
             st.info(
                 "No tests mentioned."
             )
 
+
+    # ========================================================
+    # DOCTOR INSTRUCTIONS
+    # ========================================================
 
     with st.container(
         border=True
@@ -1157,12 +1608,14 @@ with right_col:
             "📌 Doctor Instructions"
         )
 
+
         instructions = (
             clinical.get(
                 "doctor_instructions",
                 [],
             )
         )
+
 
         if instructions:
 
@@ -1172,12 +1625,17 @@ with right_col:
                     f"• {instruction}"
                 )
 
+
         else:
 
             st.info(
                 "No instructions extracted."
             )
 
+
+    # ========================================================
+    # FOLLOW UP
+    # ========================================================
 
     with st.container(
         border=True
@@ -1186,6 +1644,7 @@ with right_col:
         st.subheader(
             "📅 Follow-up"
         )
+
 
         st.write(
             clinical.get(
@@ -1220,16 +1679,18 @@ with st.container(
 
     with search_col:
 
-        search_term = st.text_input(
+        search_term = (
+            st.text_input(
 
-            "Search records",
+                "Search records",
 
-            placeholder=(
-                "Search by patient name, patient ID, "
-                "complaint or diagnosis..."
-            ),
+                placeholder=(
+                    "Search by patient name, patient ID, "
+                    "complaint or diagnosis..."
+                ),
 
-            label_visibility="collapsed",
+                label_visibility="collapsed",
+            )
         )
 
 
@@ -1247,9 +1708,12 @@ with st.container(
 
         params = {}
 
+
         if search_term.strip():
 
-            params["q"] = (
+            params[
+                "q"
+            ] = (
                 search_term.strip()
             )
 
@@ -1257,7 +1721,10 @@ with st.container(
         history_response = (
             requests.get(
 
-                f"{FASTAPI_URL}/records",
+                (
+                    f"{FASTAPI_URL}"
+                    "/records"
+                ),
 
                 params=params,
 
@@ -1266,13 +1733,18 @@ with st.container(
         )
 
 
+        # ====================================================
+        # HISTORY SUCCESS
+        # ====================================================
+
         if (
             history_response.status_code
             == 200
         ):
 
             records = (
-                history_response.json()
+                history_response
+                .json()
                 .get(
                     "records",
                     [],
@@ -1292,6 +1764,10 @@ with st.container(
                 )
 
 
+            # =================================================
+            # RECORD LOOP
+            # =================================================
+
             for record in records:
 
                 patient_name = (
@@ -1301,12 +1777,14 @@ with st.container(
                     or "Not in audio"
                 )
 
+
                 patient_id = (
                     record.get(
                         "patient_id"
                     )
                     or "No ID"
                 )
+
 
                 title = (
                     f"{patient_name}"
@@ -1320,6 +1798,11 @@ with st.container(
                     title
                 ):
 
+
+                    # =========================================
+                    # OPEN CONSULTATION
+                    # =========================================
+
                     if st.button(
 
                         "📂 Open Consultation",
@@ -1332,49 +1815,92 @@ with st.container(
                         use_container_width=True,
                     ):
 
-                        detail_response = (
-                            requests.get(
+                        try:
 
-                                (
-                                    f"{FASTAPI_URL}"
-                                    f"/records/{record['id']}"
-                                ),
+                            detail_response = (
+                                requests.get(
 
-                                timeout=20,
-                            )
-                        )
+                                    (
+                                        f"{FASTAPI_URL}"
+                                        f"/records/"
+                                        f"{record['id']}"
+                                    ),
 
-                        if (
-                            detail_response.status_code
-                            == 200
-                        ):
-
-                            selected = (
-                                detail_response.json()
-                                .get(
-                                    "record",
-                                    {},
+                                    timeout=20,
                                 )
                             )
 
-                            load_record(
-                                selected
+
+                            if (
+                                detail_response.status_code
+                                == 200
+                            ):
+
+                                selected = (
+                                    detail_response
+                                    .json()
+                                    .get(
+                                        "record",
+                                        {},
+                                    )
+                                )
+
+
+                                load_record(
+                                    selected
+                                )
+
+
+                                st.rerun()
+
+
+                            else:
+
+                                print(
+                                    "Consultation detail "
+                                    "request failed:",
+
+                                    detail_response.status_code,
+
+                                    detail_response.text,
+                                )
+
+
+                                st.error(
+                                    "Please try again "
+                                    "after some time."
+                                )
+
+
+                        except Exception as error:
+
+                            print(
+                                "Consultation detail "
+                                "loading error:",
+
+                                repr(
+                                    error
+                                ),
                             )
 
-                            st.rerun()
-
-                        else:
 
                             st.error(
-                                "Unable to load consultation."
+                                "Please try again "
+                                "after some time."
                             )
 
 
                     st.divider()
 
 
+                    # =========================================
+                    # BASIC INFORMATION
+                    # =========================================
+
                     c1, c2, c3 = (
-                        st.columns(3)
+                        st.columns(
+                            3
+                        )
                     )
 
 
@@ -1383,6 +1909,7 @@ with st.container(
                         st.write(
                             "**Patient Name**"
                         )
+
 
                         st.write(
                             patient_name
@@ -1395,6 +1922,7 @@ with st.container(
                             "**Patient ID**"
                         )
 
+
                         st.write(
                             patient_id
                         )
@@ -1406,15 +1934,23 @@ with st.container(
                             "**Consultation**"
                         )
 
+
                         st.write(
-                            f"{record['consultation_date']} "
-                            f"{record['consultation_time']}"
+                            (
+                                f"{record['consultation_date']} "
+                                f"{record['consultation_time']}"
+                            )
                         )
 
+
+                    # =========================================
+                    # DIAGNOSIS
+                    # =========================================
 
                     st.write(
                         "**Diagnosis**"
                     )
+
 
                     st.write(
                         record.get(
@@ -1424,9 +1960,14 @@ with st.container(
                     )
 
 
+                    # =========================================
+                    # CHIEF COMPLAINT
+                    # =========================================
+
                     st.write(
                         "**Chief Complaint**"
                     )
+
 
                     st.write(
                         record.get(
@@ -1436,24 +1977,31 @@ with st.container(
                     )
 
 
+                    # =========================================
+                    # SYMPTOMS
+                    # =========================================
+
                     st.write(
                         "**Symptoms**"
                     )
 
-                    symptoms = (
+
+                    history_symptoms = (
                         record.get(
                             "symptoms",
                             [],
                         )
                     )
 
-                    if symptoms:
 
-                        for symptom in symptoms:
+                    if history_symptoms:
+
+                        for symptom in history_symptoms:
 
                             st.write(
                                 f"• {symptom}"
                             )
+
 
                     else:
 
@@ -1462,25 +2010,32 @@ with st.container(
                         )
 
 
+                    # =========================================
+                    # MEDICINES
+                    # =========================================
+
                     st.write(
                         "**Medicines**"
                     )
 
-                    medicines = (
+
+                    history_medicines = (
                         record.get(
                             "medications",
                             [],
                         )
                     )
 
-                    if medicines:
 
-                        for medicine in medicines:
+                    if history_medicines:
+
+                        for medicine in history_medicines:
 
                             medicine_text = (
                                 f"• "
                                 f"{medicine.get('name')}"
                             )
+
 
                             if medicine.get(
                                 "dosage"
@@ -1491,6 +2046,7 @@ with st.container(
                                     f"{medicine.get('dosage')}"
                                 )
 
+
                             if medicine.get(
                                 "frequency"
                             ):
@@ -1499,6 +2055,7 @@ with st.container(
                                     " — "
                                     f"{medicine.get('frequency')}"
                                 )
+
 
                             if medicine.get(
                                 "duration"
@@ -1509,9 +2066,11 @@ with st.container(
                                     f"{medicine.get('duration')}"
                                 )
 
+
                             st.write(
                                 medicine_text
                             )
+
 
                     else:
 
@@ -1520,9 +2079,14 @@ with st.container(
                         )
 
 
+                    # =========================================
+                    # TRANSCRIPT
+                    # =========================================
+
                     st.write(
                         "**Transcript**"
                     )
+
 
                     st.text_area(
 
@@ -1546,18 +2110,36 @@ with st.container(
                     )
 
 
+        # ====================================================
+        # HISTORY ERROR
+        # ====================================================
+
         else:
 
+            print(
+                "History request failed:",
+                history_response.status_code,
+                history_response.text,
+            )
+
+
             st.warning(
-                "Unable to load consultation history."
+                "Please try again after some time."
             )
 
 
     except Exception as error:
 
+        print(
+            "History loading error:",
+            repr(
+                error
+            ),
+        )
+
+
         st.warning(
-            "History could not be loaded: "
-            f"{str(error)}"
+            "Please try again after some time."
         )
 
 
