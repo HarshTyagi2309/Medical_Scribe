@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 from io import BytesIO
 from textwrap import dedent
 
@@ -129,6 +130,8 @@ SESSION_DEFAULTS = {
     "last_audio_name": None,
 
     "edit_mode": False,
+
+    "last_activity_time": None,
 }
 
 
@@ -137,6 +140,71 @@ for key, value in SESSION_DEFAULTS.items():
     if key not in st.session_state:
 
         st.session_state[key] = value
+
+
+# ============================================================
+# SESSION INACTIVITY SECURITY
+# ============================================================
+
+SESSION_TIMEOUT_MINUTES = 30
+
+
+def current_utc_timestamp():
+
+    return datetime.now(
+        timezone.utc
+    ).timestamp()
+
+
+def update_activity_time():
+
+    st.session_state[
+        "last_activity_time"
+    ] = current_utc_timestamp()
+
+
+def check_inactivity_timeout():
+
+    if not st.session_state.get(
+        "authenticated"
+    ):
+        return
+
+    last_activity_time = (
+        st.session_state.get(
+            "last_activity_time"
+        )
+    )
+
+    if last_activity_time is None:
+
+        update_activity_time()
+        return
+
+    elapsed_seconds = (
+        current_utc_timestamp()
+        - last_activity_time
+    )
+
+    timeout_seconds = (
+        SESSION_TIMEOUT_MINUTES
+        * 60
+    )
+
+    if elapsed_seconds >= timeout_seconds:
+
+        for key in list(
+            st.session_state.keys()
+        ):
+
+            del st.session_state[key]
+
+        st.warning(
+            "Session ended due to inactivity. "
+            "Please login again."
+        )
+
+        st.rerun()
 
 
 # ============================================================
@@ -387,7 +455,36 @@ def get_backend_health():
 # API ERROR
 # ============================================================
 
+def clear_auth_session():
+
+    st.session_state[
+        "authenticated"
+    ] = False
+
+    st.session_state[
+        "access_token"
+    ] = None
+
+    st.session_state[
+        "username"
+    ] = None
+
+    st.session_state[
+        "user_role"
+    ] = None
+
+
 def show_api_error(response):
+
+    if response.status_code == 401:
+
+        clear_auth_session()
+
+        st.error(
+            "Session expired. Please login again."
+        )
+
+        st.rerun()
 
     try:
 
@@ -891,6 +988,8 @@ if not st.session_state.get(
                             "role"
                         )
 
+                        update_activity_time()
+
                         st.rerun()
 
                     else:
@@ -927,6 +1026,14 @@ if not st.session_state.get(
 
 
     st.stop()
+
+
+# ============================================================
+# SESSION TIMEOUT CHECK
+# ============================================================
+
+check_inactivity_timeout()
+
 
 
 # ============================================================
@@ -1037,7 +1144,7 @@ with header_right:
     st.write("")
 
     if st.button(
-        "＋ New Consultation",
+        "+ New Consultation",
         use_container_width=True,
     ):
 
@@ -1667,7 +1774,7 @@ with right_column:
         with vital_col4:
 
             st.metric(
-                "SpO₂",
+                "SpOâ''",
                 vitals.get(
                     "oxygen_saturation"
                 )
@@ -2094,7 +2201,7 @@ if (
 
                 edit_spo2 = (
                     st.text_input(
-                        "SpO₂",
+                        "SpOâ''",
                         value=(
                             current_vitals.get(
                                 "oxygen_saturation"
@@ -2970,3 +3077,4 @@ if st.button(
             "Global audit history error:",
             type(error).__name__,
         )
+

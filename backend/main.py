@@ -1,3 +1,9 @@
+from backend.backup_service import (
+    create_backup,
+    verify_backup,
+    list_backups,
+    restore_backup,
+)
 import hashlib
 import json
 import os
@@ -30,6 +36,7 @@ from backend.audit_history_service import (
     get_record_history,
     get_all_record_history,
 )
+
 from backend.clinical_extractor import extract_clinical_data
 from backend.database import Base, SessionLocal, engine
 from backend.langfuse_service import (
@@ -2131,3 +2138,65 @@ def global_audit_history(
     finally:
 
         db.close()
+
+
+
+
+# ============================================================
+# ADMIN BACKUP & RECOVERY
+# ============================================================
+
+@app.post(
+    "/admin/backup"
+)
+def create_system_backup(
+    current_user=Depends(
+        require_admin
+    ),
+):
+
+    return create_backup()
+
+
+@app.get(
+    "/admin/backups"
+)
+def get_system_backups(
+    current_user=Depends(
+        require_admin
+    ),
+):
+
+    return {
+        "backups": list_backups()
+    }
+
+
+@app.get(
+    "/admin/backups/{backup_id}/verify"
+)
+def verify_system_backup(
+    backup_id: str,
+    current_user=Depends(
+        require_admin
+    ),
+):
+
+    return verify_backup(
+        backup_id
+    )
+
+
+@app.post(
+    "/admin/restore/{backup_id}"
+)
+def restore_system_backup(
+    backup_id: str,
+    current_user=Depends(
+        require_admin
+    ),
+):
+
+    return restore_backup(
+        backup_id
+    )
