@@ -407,6 +407,161 @@ def show_api_error(response):
     st.error(detail)
 
 
+
+
+# ============================================================
+# AUDIT HISTORY VIEW
+# ============================================================
+
+def show_audit_history(record_id):
+
+    try:
+
+        response = requests.get(
+            f"{FASTAPI_URL}/records/{record_id}/audit-history",
+            headers=api_headers(),
+            timeout=10,
+        )
+
+        if response.status_code != 200:
+
+            show_api_error(response)
+            return
+
+        data = response.json()
+
+        history = data.get(
+            "history",
+            [],
+        )
+
+        if not history:
+
+            st.info(
+                "No edit or delete history found."
+            )
+            return
+
+        st.markdown(
+            f"### Audit History ? Record #{record_id}"
+        )
+
+        for item in history:
+
+            action = item.get(
+                "action",
+                "UNKNOWN",
+            )
+
+            username = item.get(
+                "username",
+                "Unknown",
+            )
+
+            timestamp = item.get(
+                "timestamp",
+                "",
+            )
+
+            changed_fields = item.get(
+                "changed_fields",
+                [],
+            )
+
+            old_values = item.get(
+                "old_values",
+            ) or {}
+
+            new_values = item.get(
+                "new_values",
+            ) or {}
+
+            with st.expander(
+                f"{action} | {timestamp} | {username}"
+            ):
+
+                st.write(
+                    f"**Doctor/User:** {username}"
+                )
+
+                st.write(
+                    f"**Action:** {action}"
+                )
+
+                st.write(
+                    f"**Time:** {timestamp}"
+                )
+
+                if action == "EDIT":
+
+                    if not changed_fields:
+
+                        st.write(
+                            "No changed fields recorded."
+                        )
+
+                    for field in changed_fields:
+
+                        st.markdown(
+                            f"**{field}**"
+                        )
+
+                        col1, col2 = st.columns(
+                            2
+                        )
+
+                        with col1:
+
+                            st.caption(
+                                "Old Value"
+                            )
+
+                            st.write(
+                                old_values.get(
+                                    field
+                                )
+                            )
+
+                        with col2:
+
+                            st.caption(
+                                "New Value"
+                            )
+
+                            st.write(
+                                new_values.get(
+                                    field
+                                )
+                            )
+
+                if item.get(
+                    "details"
+                ):
+
+                    st.caption(
+                        item.get(
+                            "details"
+                        )
+                    )
+
+    except requests.exceptions.Timeout:
+
+        st.error(
+            "Audit history request timed out."
+        )
+
+    except Exception as error:
+
+        st.error(
+            "Unable to load audit history."
+        )
+
+        print(
+            "Audit history frontend error:",
+            type(error).__name__,
+        )
+
+
 # ============================================================
 # STYLING
 # ============================================================
@@ -2427,6 +2582,24 @@ if backend_online and MEDICAL_SCRIBE_API_KEY:
 
                             delete_button = False
 
+                            audit_button = st.button(
+                                "Audit History",
+                                key=(
+                                    f"audit_record_"
+                                    f"{record.get('id')}"
+                                ),
+                                type="secondary",
+                            )
+
+                            if audit_button:
+
+                                show_audit_history(
+                                    record.get(
+                                        "id"
+                                    )
+                                )
+
+
                             if (
                                 st.session_state.get(
                                     "user_role"
@@ -2610,3 +2783,190 @@ st.caption(
     "FastAPI • Streamlit • Groq • SQLite • Langfuse"
 )
 
+
+
+# ============================================================
+# GLOBAL AUDIT HISTORY
+# ============================================================
+
+st.divider()
+
+st.markdown(
+    "## Audit History"
+)
+
+st.caption(
+    "Permanent doctor edit/delete activity, including deleted records."
+)
+
+if st.button(
+    "View Full Audit History",
+    key="global_audit_history_button",
+):
+
+    try:
+
+        response = requests.get(
+            f"{FASTAPI_URL}/audit-history",
+            headers=api_headers(),
+            timeout=10,
+        )
+
+        if response.status_code != 200:
+
+            show_api_error(
+                response
+            )
+
+        else:
+
+            data = response.json()
+
+            history = data.get(
+                "history",
+                [],
+            )
+
+            if not history:
+
+                st.info(
+                    "No audit history found."
+                )
+
+            else:
+
+                st.success(
+                    f"{len(history)} audit event(s) found."
+                )
+
+                for item in history:
+
+                    record_id = item.get(
+                        "record_id"
+                    )
+
+                    action = item.get(
+                        "action",
+                        "UNKNOWN",
+                    )
+
+                    username = item.get(
+                        "username",
+                        "Unknown",
+                    )
+
+                    timestamp = item.get(
+                        "timestamp",
+                        "",
+                    )
+
+                    with st.expander(
+                        f"Record #{record_id} | "
+                        f"{action} | "
+                        f"{timestamp}"
+                    ):
+
+                        st.write(
+                            f"**Record ID:** {record_id}"
+                        )
+
+                        st.write(
+                            f"**Doctor/User:** {username}"
+                        )
+
+                        st.write(
+                            f"**Role:** "
+                            f"{item.get('role', '')}"
+                        )
+
+                        st.write(
+                            f"**Action:** {action}"
+                        )
+
+                        st.write(
+                            f"**Time:** {timestamp}"
+                        )
+
+                        if action == "EDIT":
+
+                            changed_fields = (
+                                item.get(
+                                    "changed_fields",
+                                    [],
+                                )
+                            )
+
+                            old_values = (
+                                item.get(
+                                    "old_values",
+                                )
+                                or {}
+                            )
+
+                            new_values = (
+                                item.get(
+                                    "new_values",
+                                )
+                                or {}
+                            )
+
+                            for field in changed_fields:
+
+                                st.markdown(
+                                    f"### {field}"
+                                )
+
+                                old_col, new_col = (
+                                    st.columns(2)
+                                )
+
+                                with old_col:
+
+                                    st.caption(
+                                        "Old Value"
+                                    )
+
+                                    st.write(
+                                        old_values.get(
+                                            field
+                                        )
+                                    )
+
+                                with new_col:
+
+                                    st.caption(
+                                        "New Value"
+                                    )
+
+                                    st.write(
+                                        new_values.get(
+                                            field
+                                        )
+                                    )
+
+                        details = item.get(
+                            "details"
+                        )
+
+                        if details:
+
+                            st.caption(
+                                details
+                            )
+
+    except requests.exceptions.Timeout:
+
+        st.error(
+            "Audit history request timed out."
+        )
+
+    except Exception as error:
+
+        st.error(
+            "Unable to load global audit history."
+        )
+
+        print(
+            "Global audit history error:",
+            type(error).__name__,
+        )

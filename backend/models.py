@@ -157,3 +157,70 @@ class ConsultationRecord(Base):
         Text,
         nullable=True,
     )
+
+
+# ============================================================
+# RECORD AUDIT / REVISION HISTORY
+# ============================================================
+
+class RecordAuditHistory(Base):
+
+    __tablename__ = "record_audit_history"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+        autoincrement=True,
+    )
+
+    # Consultation record which was edited/deleted
+    record_id: Mapped[int] = mapped_column(
+        Integer,
+        index=True,
+    )
+
+    # EDIT / DELETE
+    action: Mapped[str] = mapped_column(
+        String(20),
+        index=True,
+    )
+
+    # User who performed the action
+    username: Mapped[str] = mapped_column(
+        String(150),
+    )
+
+    role: Mapped[str] = mapped_column(
+        String(50),
+    )
+
+    # Exact date + time
+    timestamp: Mapped[str] = mapped_column(
+        String(100),
+        index=True,
+    )
+
+    # Which fields were changed
+    changed_fields: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    # Old values - later encrypted before saving
+    old_values: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    # New values - later encrypted before saving
+    new_values: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    # Extra information such as audio deleted
+    details: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )

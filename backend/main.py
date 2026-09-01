@@ -24,6 +24,12 @@ from sqlalchemy.orm import Session
 from backend.login_service import router as login_router, initialize_default_users
 
 from backend.audit_service import audit_event
+from backend.audit_history_service import (
+    save_edit_history,
+    save_delete_history,
+    get_record_history,
+    get_all_record_history,
+)
 from backend.clinical_extractor import extract_clinical_data
 from backend.database import Base, SessionLocal, engine
 from backend.langfuse_service import (
@@ -1531,6 +1537,9 @@ def get_record(
 def update_record(
     record_id: int,
     request: RecordUpdateRequest,
+    current_user: dict = Depends(
+        require_doctor
+    ),
 ):
 
     db = SessionLocal()
@@ -1566,6 +1575,10 @@ def update_record(
                     "Consultation record not found."
                 ),
             )
+
+        old_record = serialize_record(
+            record
+        )
 
         provided_fields = (
             request.model_fields_set
@@ -1765,6 +1778,19 @@ def update_record(
             record
         )
 
+        new_record = serialize_record(
+            record
+        )
+
+        save_edit_history(
+            db=db,
+            record_id=record.id,
+            username=current_user["actor"],
+            role=current_user["role"],
+            old_values=old_record,
+            new_values=new_record,
+        )
+
 
         # ====================================================
         # PHI-SAFE AUDIT
@@ -1841,6 +1867,9 @@ def update_record(
 )
 def delete_record(
     record_id: int,
+    current_user: dict = Depends(
+        require_doctor
+    ),
 ):
 
     db = SessionLocal()
@@ -1953,6 +1982,21 @@ def delete_record(
 
 
         # ====================================================
+        # SAVE DELETE HISTORY
+        # ====================================================
+
+        save_delete_history(
+            db=db,
+            record_id=record_id,
+            username=current_user["actor"],
+            role=current_user["role"],
+            details=(
+                "Consultation record deleted. "
+                f"Audio deleted: {audio_deleted}"
+            ),
+        )
+
+        # ====================================================
         # AUDIT
         # ====================================================
 
@@ -2022,3 +2066,68 @@ def delete_record(
 
         db.close()
 
+
+
+# ============================================================
+# RECORD AUDIT HISTORY
+# ============================================================
+
+@app.get(
+    "/records/{record_id}/audit-history",
+)
+def record_audit_history(
+    record_id: int,
+    current_user: dict = Depends(
+        require_doctor_or_admin
+    ),
+):
+
+    db = SessionLocal()
+
+    try:
+
+        history = get_record_history(
+            db=db,
+            record_id=record_id,
+        )
+
+        return {
+            "record_id": record_id,
+            "count": len(history),
+            "history": history,
+        }
+
+    finally:
+
+        db.close()
+
+
+# ============================================================
+# GLOBAL RECORD AUDIT HISTORY
+# ============================================================
+
+@app.get(
+    "/audit-history",
+)
+def global_audit_history(
+    current_user: dict = Depends(
+        require_doctor_or_admin
+    ),
+):
+
+    db = SessionLocal()
+
+    try:
+
+        history = get_all_record_history(
+            db=db
+        )
+
+        return {
+            "count": len(history),
+            "history": history,
+        }
+
+    finally:
+
+        db.close()
