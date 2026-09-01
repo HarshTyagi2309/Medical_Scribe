@@ -4,28 +4,23 @@ from dotenv import load_dotenv
 from langfuse import get_client
 
 
-# ============================================================
-# LOAD ENVIRONMENT VARIABLES
-# ============================================================
+load_dotenv(".env", override=True)
 
-load_dotenv()
-
-
-# ============================================================
-# ENVIRONMENT VALUES
-# ============================================================
 
 LANGFUSE_PUBLIC_KEY = os.getenv(
-    "LANGFUSE_PUBLIC_KEY"
-)
+    "LANGFUSE_PUBLIC_KEY",
+    "",
+).strip()
 
 LANGFUSE_SECRET_KEY = os.getenv(
-    "LANGFUSE_SECRET_KEY"
-)
+    "LANGFUSE_SECRET_KEY",
+    "",
+).strip()
 
 LANGFUSE_BASE_URL = os.getenv(
-    "LANGFUSE_BASE_URL"
-)
+    "LANGFUSE_BASE_URL",
+    "https://cloud.langfuse.com",
+).strip()
 
 CAPTURE_CLINICAL_DATA = (
     os.getenv(
@@ -38,58 +33,100 @@ CAPTURE_CLINICAL_DATA = (
 )
 
 
-# ============================================================
-# LANGFUSE CLIENT
-# ============================================================
+def is_langfuse_configured() -> bool:
 
-def get_langfuse_client():
-    """
-    Return configured Langfuse client.
-    """
+    return bool(
+        LANGFUSE_PUBLIC_KEY
+        and LANGFUSE_SECRET_KEY
+    )
 
-    if not LANGFUSE_PUBLIC_KEY:
-        raise ValueError(
-            "LANGFUSE_PUBLIC_KEY is missing from .env"
-        )
-
-    if not LANGFUSE_SECRET_KEY:
-        raise ValueError(
-            "LANGFUSE_SECRET_KEY is missing from .env"
-        )
-
-    return get_client()
-
-
-# ============================================================
-# PRIVACY SETTING
-# ============================================================
 
 def should_capture_clinical_data() -> bool:
-    """
-    Decide whether raw clinical transcript/data should
-    be sent to Langfuse.
 
-    Default is False for healthcare privacy.
-    """
-
-    return CAPTURE_CLINICAL_DATA
+    return (
+        CAPTURE_CLINICAL_DATA
+        and is_langfuse_configured()
+    )
 
 
-# ============================================================
-# FLUSH
-# ============================================================
+def get_langfuse_client():
+
+    if not is_langfuse_configured():
+
+        return None
+
+    try:
+
+        return get_client()
+
+    except Exception as error:
+
+        print(
+            "Langfuse unavailable:",
+            type(error).__name__,
+        )
+
+        return None
+
+
+def safe_langfuse_metadata(
+    *,
+    component=None,
+    provider=None,
+    model=None,
+    status=None,
+    session_id=None,
+    audio_size=None,
+    transcript_length=None,
+    latency_ms=None,
+    fallback_used=None,
+    error_type=None,
+):
+
+    metadata = {}
+
+    values = {
+
+        "component": component,
+
+        "provider": provider,
+
+        "model": model,
+
+        "status": status,
+
+        "session_id": session_id,
+
+        "audio_size_bytes": audio_size,
+
+        "transcript_length": transcript_length,
+
+        "latency_ms": latency_ms,
+
+        "fallback_used": fallback_used,
+
+        "error_type": error_type,
+    }
+
+    for key, value in values.items():
+
+        if value is not None:
+
+            metadata[key] = value
+
+    return metadata
+
 
 def flush_langfuse():
-    """
-    Force pending Langfuse traces to be sent.
-    """
 
     try:
 
         langfuse = get_langfuse_client()
 
-        langfuse.flush()
+        if langfuse:
+
+            langfuse.flush()
 
     except Exception:
-        # Langfuse must never crash Medical Scribe.
+
         pass

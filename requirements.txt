@@ -9,3 +9,10 @@ pydantic==2.13.4
 python-multipart==0.0.32
 requests==2.34.2
 httpx==0.28.1
+numpy
+streamlit-webrtc
+cryptography
+openai==3.6.0
+
+pwdlib[argon2]
+PyJWT

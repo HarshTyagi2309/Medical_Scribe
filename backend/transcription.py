@@ -1,49 +1,72 @@
 import os
-from io import BytesIO
+import time
 
 from dotenv import load_dotenv
 from groq import Groq
+from openai import OpenAI
 
 from backend.langfuse_service import (
     get_langfuse_client,
+    safe_langfuse_metadata,
     should_capture_clinical_data,
 )
+
+
+load_dotenv()
 
 
 # ============================================================
 # ENVIRONMENT
 # ============================================================
 
-load_dotenv()
-
-
 GROQ_API_KEY = os.getenv(
-    "GROQ_API_KEY"
-)
+    "GROQ_API_KEY",
+    "",
+).strip()
+
+OPENAI_API_KEY = os.getenv(
+    "OPENAI_API_KEY",
+    "",
+).strip()
 
 
 if not GROQ_API_KEY:
     raise ValueError(
-        "GROQ_API_KEY not found. "
-        "Please add it to your .env file."
+        "GROQ_API_KEY is missing from .env"
     )
 
 
-# ============================================================
-# GROQ CLIENT
-# ============================================================
-
-client = Groq(
+groq_client = Groq(
     api_key=GROQ_API_KEY
 )
+
+
+# OpenAI is optional.
+# It is used ONLY if both Groq transcription
+# models fail.
+
+openai_client = None
+
+if OPENAI_API_KEY:
+    openai_client = OpenAI(
+        api_key=OPENAI_API_KEY
+    )
 
 
 # ============================================================
 # MODELS
 # ============================================================
 
-TRANSCRIPTION_MODEL = (
+PRIMARY_TRANSCRIPTION_MODEL = (
     "whisper-large-v3"
+)
+
+FALLBACK_TRANSCRIPTION_MODEL = (
+    "whisper-large-v3-turbo"
+)
+
+OPENAI_TRANSCRIPTION_MODEL = (
+    "gpt-transcribe"
 )
 
 FORMATTER_MODEL = (
@@ -52,354 +75,961 @@ FORMATTER_MODEL = (
 
 
 # ============================================================
-# DOCTOR / PATIENT TRANSCRIPT FORMATTER
+# CURRENT GROQ PRICING
 # ============================================================
 
-def format_doctor_patient_transcript(
-    transcript: str,
-) -> str:
-    """
-    Convert raw transcription into a clean
-    Doctor/Patient dialogue format.
-
-    The formatter must not invent or remove
-    clinical information.
-    """
-
-    if not transcript:
-        return transcript
+WHISPER_PRICE_PER_HOUR = {
+    "whisper-large-v3": 0.111,
+    "whisper-large-v3-turbo": 0.04,
+}
 
 
-    prompt = f"""
+FORMATTER_INPUT_PRICE_PER_MILLION = (
+    0.075
+)
+
+FORMATTER_OUTPUT_PRICE_PER_MILLION = (
+    0.30
+)
+
+
+# ============================================================
+# LANGFUSE HELPERS
+# ============================================================
+
+def start_generation(
+    *,
+    name,
+    model,
+    metadata,
+):
+
+    try:
+
+        langfuse = get_langfuse_client()
+
+        if not langfuse:
+            return None
+
+        return langfuse.start_observation(
+            name=name,
+            as_type="generation",
+            model=model,
+            metadata=metadata,
+        )
+
+    except Exception as error:
+
+        print(
+            "Langfuse observation unavailable:",
+            type(error).__name__,
+        )
+
+        return None
+
+
+def end_generation(
+    generation,
+    *,
+    output=None,
+    metadata=None,
+    usage_details=None,
+    cost_details=None,
+    error=None,
+):
+
+    if not generation:
+        return
+
+    try:
+
+        update_data = {}
+
+        if output is not None:
+            update_data["output"] = output
+
+        if metadata is not None:
+            update_data["metadata"] = metadata
+
+        if usage_details is not None:
+            update_data[
+                "usage_details"
+            ] = usage_details
+
+        if cost_details is not None:
+            update_data[
+                "cost_details"
+            ] = cost_details
+
+        if error is not None:
+
+            update_data["level"] = "ERROR"
+
+            update_data[
+                "status_message"
+            ] = type(error).__name__
+
+        generation.update(
+            **update_data
+        )
+
+        generation.end()
+
+    except Exception as error:
+
+        print(
+            "Langfuse observation update failed:",
+            type(error).__name__,
+        )
+
+
+# ============================================================
+# TOKEN HELPER
+# ============================================================
+
+def get_token_usage(response):
+
+    usage = getattr(
+        response,
+        "usage",
+        None,
+    )
+
+    if not usage:
+        return {
+            "input": 0,
+            "output": 0,
+            "total": 0,
+        }
+
+    input_tokens = getattr(
+        usage,
+        "prompt_tokens",
+        0,
+    ) or 0
+
+    output_tokens = getattr(
+        usage,
+        "completion_tokens",
+        0,
+    ) or 0
+
+    total_tokens = getattr(
+        usage,
+        "total_tokens",
+        input_tokens + output_tokens,
+    ) or (
+        input_tokens
+        + output_tokens
+    )
+
+    return {
+        "input": int(input_tokens),
+        "output": int(output_tokens),
+        "total": int(total_tokens),
+    }
+
+
+# ============================================================
+# FORMATTER COST
+# ============================================================
+
+def calculate_formatter_cost(
+    token_usage,
+):
+
+    input_tokens = token_usage[
+        "input"
+    ]
+
+    output_tokens = token_usage[
+        "output"
+    ]
+
+    input_cost = (
+        input_tokens
+        / 1_000_000
+    ) * FORMATTER_INPUT_PRICE_PER_MILLION
+
+    output_cost = (
+        output_tokens
+        / 1_000_000
+    ) * FORMATTER_OUTPUT_PRICE_PER_MILLION
+
+    total_cost = (
+        input_cost
+        + output_cost
+    )
+
+    return {
+        "input": round(
+            input_cost,
+            8,
+        ),
+        "output": round(
+            output_cost,
+            8,
+        ),
+        "total": round(
+            total_cost,
+            8,
+        ),
+    }
+
+
+# ============================================================
+# WHISPER COST
+# ============================================================
+
+def calculate_whisper_cost(
+    *,
+    model,
+    duration_seconds,
+):
+
+    price_per_hour = (
+        WHISPER_PRICE_PER_HOUR.get(
+            model
+        )
+    )
+
+    if price_per_hour is None:
+        return None
+
+    billed_seconds = max(
+        float(duration_seconds),
+        10.0,
+    )
+
+    total_cost = (
+        billed_seconds
+        / 3600
+    ) * price_per_hour
+
+    return {
+        "audio": round(
+            total_cost,
+            8,
+        ),
+        "total": round(
+            total_cost,
+            8,
+        ),
+    }
+
+
+# ============================================================
+# AUDIO DURATION
+# ============================================================
+
+def get_audio_duration(
+    transcription,
+):
+
+    duration = getattr(
+        transcription,
+        "duration",
+        None,
+    )
+
+    if duration is not None:
+
+        try:
+            return float(
+                duration
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+            pass
+
+    segments = getattr(
+        transcription,
+        "segments",
+        None,
+    )
+
+    if segments:
+
+        try:
+
+            last_segment = (
+                segments[-1]
+            )
+
+            end_time = getattr(
+                last_segment,
+                "end",
+                None,
+            )
+
+            if end_time is not None:
+                return float(
+                    end_time
+                )
+
+        except Exception:
+            pass
+
+    return None
+
+
+# ============================================================
+# TRANSCRIPT FORMATTER
+# ============================================================
+
+def format_transcript(
+    raw_transcript: str,
+    session_id: str | None = None,
+):
+
+    if not raw_transcript:
+        return ""
+
+    start_time = (
+        time.perf_counter()
+    )
+
+    generation = start_generation(
+        name="transcript-formatting",
+        model=FORMATTER_MODEL,
+        metadata=safe_langfuse_metadata(
+            component="transcript_formatting",
+            provider="groq",
+            model=FORMATTER_MODEL,
+            status="started",
+            session_id=session_id,
+            transcript_length=len(
+                raw_transcript
+            ),
+            fallback_used=False,
+        ),
+    )
+
+    formatter_prompt = """
 You are formatting a medical consultation transcript.
 
-Convert the raw transcript into a clean conversation
-between a Doctor and a Patient.
+Convert the transcript into a clear dialogue.
 
-Use exactly these speaker labels:
-
-Doctor:
-Patient:
-
-IMPORTANT RULES:
-
-1. Do not summarize the conversation.
-
-2. Do not remove any information from the transcript.
-
-3. Do not add or invent any medical information.
-
-4. Preserve all important clinical information exactly,
-including:
-
-- Patient name
-- Patient age
-- Date
-- Consultation time
-- Symptoms
-- Symptom duration
-- Blood pressure
-- Heart rate
-- Temperature
-- Oxygen saturation
-- ECG information
-- Diagnosis
-- Medicine names
-- Medicine dosage
-- Medicine frequency
-- Medicine duration
-- Tests
-- Doctor instructions
-- Follow-up instructions
-
-5. Correct only obvious punctuation,
-capitalization and formatting problems.
-
-6. Identify Doctor and Patient based on
-the context of the conversation.
-
-7. Every time the speaker changes,
-start a new line.
-
-8. Add one blank line between speakers.
-
-9. Do not use any labels other than:
+Use only these labels:
 
 Doctor:
 Patient:
 
-10. If a sentence clearly contains the doctor
-checking vitals, giving diagnosis, prescribing
-medicine, recommending tests or giving instructions,
-label it as Doctor.
-
-11. If a sentence contains the patient's symptoms,
-questions, personal information or response to
-the doctor, label it as Patient.
-
-12. Do not change medical facts.
-
-13. Return only the formatted transcript.
-Do not provide explanations or notes.
-
-
-RAW TRANSCRIPT:
-
-{transcript}
+Rules:
+- Do not add medical information.
+- Do not invent missing words.
+- Do not diagnose anything.
+- Preserve the meaning of the conversation.
+- Only organize the existing transcript.
 """
-
 
     try:
 
         response = (
-            client.chat.completions.create(
+            groq_client
+            .chat
+            .completions
+            .create(
                 model=FORMATTER_MODEL,
-
                 messages=[
                     {
                         "role": "system",
-                        "content": (
-                            "You are a medical transcript "
-                            "formatter. Your job is only to "
-                            "separate doctor and patient speech "
-                            "without changing clinical meaning."
-                        ),
+                        "content": formatter_prompt,
                     },
                     {
                         "role": "user",
-                        "content": prompt,
+                        "content": raw_transcript,
                     },
                 ],
-
-                temperature=0.0,
+                temperature=0.1,
+                max_tokens=2500,
             )
         )
-
 
         formatted_transcript = (
             response
             .choices[0]
             .message
             .content
-            or ""
-        ).strip()
+            .strip()
+        )
 
+        latency_ms = round(
+            (
+                time.perf_counter()
+                - start_time
+            )
+            * 1000,
+            2,
+        )
 
-        if not formatted_transcript:
-            return transcript
+        token_usage = (
+            get_token_usage(
+                response
+            )
+        )
 
+        cost_details = (
+            calculate_formatter_cost(
+                token_usage
+            )
+        )
+
+        langfuse_output = None
+
+        if should_capture_clinical_data():
+            langfuse_output = (
+                formatted_transcript
+            )
+
+        metadata = (
+            safe_langfuse_metadata(
+                component="transcript_formatting",
+                provider="groq",
+                model=FORMATTER_MODEL,
+                status="success",
+                session_id=session_id,
+                transcript_length=len(
+                    formatted_transcript
+                ),
+                latency_ms=latency_ms,
+                fallback_used=False,
+            )
+        )
+
+        metadata[
+            "latency_seconds"
+        ] = round(
+            latency_ms / 1000,
+            3,
+        )
+
+        metadata[
+            "input_tokens"
+        ] = token_usage["input"]
+
+        metadata[
+            "output_tokens"
+        ] = token_usage["output"]
+
+        metadata[
+            "total_tokens"
+        ] = token_usage["total"]
+
+        metadata[
+            "estimated_cost_usd"
+        ] = cost_details["total"]
+
+        end_generation(
+            generation,
+            output=langfuse_output,
+            metadata=metadata,
+            usage_details={
+                "input": token_usage["input"],
+                "output": token_usage["output"],
+                "total": token_usage["total"],
+            },
+            cost_details=cost_details,
+        )
+
+        print(
+            "Transcript formatting:",
+            f"{latency_ms / 1000:.3f}s",
+            "| tokens:",
+            token_usage["total"],
+            "| cost: $",
+            cost_details["total"],
+        )
 
         return formatted_transcript
 
-
     except Exception as error:
 
-        print(
-            "Transcript formatting failed. "
-            "Using original transcript instead."
+        latency_ms = round(
+            (
+                time.perf_counter()
+                - start_time
+            )
+            * 1000,
+            2,
+        )
+
+        end_generation(
+            generation,
+            metadata=safe_langfuse_metadata(
+                component="transcript_formatting",
+                provider="groq",
+                model=FORMATTER_MODEL,
+                status="failed",
+                session_id=session_id,
+                latency_ms=latency_ms,
+                fallback_used=False,
+                error_type=type(
+                    error
+                ).__name__,
+            ),
+            error=error,
         )
 
         print(
-            f"Formatter error: {str(error)}"
+            "Transcript formatter failed:",
+            type(error).__name__,
         )
 
-        return transcript
+        return raw_transcript
 
 
 # ============================================================
-# TRANSCRIPTION FUNCTION
+# GROQ TRANSCRIPTION ATTEMPT
 # ============================================================
 
-def transcribe_audio(
+def transcribe_with_model(
+    *,
     audio_bytes: bytes,
     filename: str,
-) -> str:
-    """
-    Convert doctor-patient audio into text,
-    format it as Doctor/Patient dialogue,
-    and trace transcription in Langfuse.
-    """
+    model: str,
+    session_id: str | None,
+    fallback_used: bool,
+):
 
-
-    # ========================================================
-    # VALIDATE AUDIO
-    # ========================================================
-
-    if not audio_bytes:
-        raise ValueError(
-            "Audio file is empty."
-        )
-
-
-    # ========================================================
-    # LANGFUSE CLIENT
-    # ========================================================
-
-    langfuse = (
-        get_langfuse_client()
+    start_time = (
+        time.perf_counter()
     )
 
+    observation_name = (
+        "audio-transcription-fallback"
+        if fallback_used
+        else "audio-transcription-primary"
+    )
 
-    trace_input = {
-        "filename": filename,
-
-        "audio_size_bytes": len(
-            audio_bytes
+    generation = start_generation(
+        name=observation_name,
+        model=model,
+        metadata=safe_langfuse_metadata(
+            component="audio_transcription",
+            provider="groq",
+            model=model,
+            status="started",
+            session_id=session_id,
+            audio_size=len(
+                audio_bytes
+            ),
+            fallback_used=fallback_used,
         ),
-    }
-
+    )
 
     try:
 
-        # ====================================================
-        # LANGFUSE GENERATION TRACE
-        # ====================================================
+        transcription = (
+            groq_client
+            .audio
+            .transcriptions
+            .create(
+                file=(
+                    filename,
+                    audio_bytes,
+                ),
+                model=model,
+                response_format="verbose_json",
+                timestamp_granularities=[
+                    "segment"
+                ],
+            )
+        )
 
-        with langfuse.start_as_current_observation(
-            as_type="generation",
+        raw_transcript = (
+            getattr(
+                transcription,
+                "text",
+                "",
+            )
+            or ""
+        ).strip()
 
-            name="consultation-transcription",
+        latency_ms = round(
+            (
+                time.perf_counter()
+                - start_time
+            )
+            * 1000,
+            2,
+        )
 
-            model=TRANSCRIPTION_MODEL,
+        duration_seconds = (
+            get_audio_duration(
+                transcription
+            )
+        )
 
-            input=trace_input,
-        ) as generation:
+        cost_details = None
 
+        if duration_seconds is not None:
 
-            # =================================================
-            # PREPARE AUDIO FILE
-            # =================================================
+            cost_details = (
+                calculate_whisper_cost(
+                    model=model,
+                    duration_seconds=duration_seconds,
+                )
+            )
 
-            audio_file = BytesIO(
+        metadata = safe_langfuse_metadata(
+            component="audio_transcription",
+            provider="groq",
+            model=model,
+            status="success",
+            session_id=session_id,
+            audio_size=len(
                 audio_bytes
+            ),
+            transcript_length=len(
+                raw_transcript
+            ),
+            latency_ms=latency_ms,
+            fallback_used=fallback_used,
+        )
+
+        metadata[
+            "latency_seconds"
+        ] = round(
+            latency_ms / 1000,
+            3,
+        )
+
+        if duration_seconds is not None:
+
+            metadata[
+                "audio_duration_seconds"
+            ] = round(
+                duration_seconds,
+                3,
             )
 
+        if cost_details:
 
-            audio_file.name = (
-                filename
+            metadata[
+                "estimated_cost_usd"
+            ] = cost_details["total"]
+
+        langfuse_output = None
+
+        if should_capture_clinical_data():
+            langfuse_output = raw_transcript
+
+        end_generation(
+            generation,
+            output=langfuse_output,
+            metadata=metadata,
+            cost_details=cost_details,
+        )
+
+        print(
+            observation_name,
+            "| provider: groq",
+            "| model:",
+            model,
+            "| time:",
+            f"{latency_ms / 1000:.3f}s",
+        )
+
+        return raw_transcript
+
+    except Exception as error:
+
+        latency_ms = round(
+            (
+                time.perf_counter()
+                - start_time
             )
+            * 1000,
+            2,
+        )
 
-
-            # =================================================
-            # GROQ WHISPER TRANSCRIPTION
-            # =================================================
-
-            transcription = (
-                client.audio.transcriptions.create(
-
-                    file=(
-                        filename,
-                        audio_file.read(),
-                    ),
-
-                    model=(
-                        TRANSCRIPTION_MODEL
-                    ),
-
-                    response_format="json",
-
-                    temperature=0.0,
-                )
-            )
-
-
-            # =================================================
-            # RAW TRANSCRIPT
-            # =================================================
-
-            raw_transcript = (
-                transcription.text
-                or ""
-            ).strip()
-
-
-            # =================================================
-            # CHECK SPEECH
-            # =================================================
-
-            if not raw_transcript:
-
-                generation.update(
-
-                    level="ERROR",
-
-                    status_message=(
-                        "No speech detected "
-                        "in consultation audio."
-                    ),
-                )
-
-
-                raise ValueError(
-                    "No speech could be detected "
-                    "in the uploaded audio."
-                )
-
-
-            # =================================================
-            # FORMAT AS DOCTOR / PATIENT
-            # =================================================
-
-            transcript = (
-                format_doctor_patient_transcript(
-                    raw_transcript
-                )
-            )
-
-
-            # =================================================
-            # PRIVACY-AWARE LANGFUSE OUTPUT
-            # =================================================
-
-            if should_capture_clinical_data():
-
-                generation.update(
-                    output={
-                        "raw_transcript": (
-                            raw_transcript
-                        ),
-
-                        "formatted_transcript": (
-                            transcript
-                        ),
-                    }
-                )
-
-
-            else:
-
-                generation.update(
-                    output={
-                        "transcription_successful": True,
-
-                        "raw_transcript_characters": len(
-                            raw_transcript
-                        ),
-
-                        "formatted_transcript_characters": len(
-                            transcript
-                        ),
-
-                        "clinical_content_logged": False,
-                    }
-                )
-
-
-            # =================================================
-            # RETURN FORMATTED TRANSCRIPT
-            # =================================================
-
-            return transcript
-
-
-    except ValueError:
+        end_generation(
+            generation,
+            metadata=safe_langfuse_metadata(
+                component="audio_transcription",
+                provider="groq",
+                model=model,
+                status="failed",
+                session_id=session_id,
+                audio_size=len(
+                    audio_bytes
+                ),
+                latency_ms=latency_ms,
+                fallback_used=fallback_used,
+                error_type=type(
+                    error
+                ).__name__,
+            ),
+            error=error,
+        )
 
         raise
 
 
-    except Exception as error:
+# ============================================================
+# OPENAI PROVIDER FALLBACK
+# ============================================================
+
+def transcribe_with_openai(
+    *,
+    audio_bytes: bytes,
+    filename: str,
+    session_id: str | None,
+):
+
+    if openai_client is None:
 
         raise RuntimeError(
-            "Audio transcription failed: "
-            f"{str(error)}"
-        ) from error
+            "OpenAI emergency fallback is not configured."
+        )
+
+    start_time = (
+        time.perf_counter()
+    )
+
+    generation = start_generation(
+        name="audio-transcription-provider-fallback",
+        model=OPENAI_TRANSCRIPTION_MODEL,
+        metadata=safe_langfuse_metadata(
+            component="audio_transcription",
+            provider="openai",
+            model=OPENAI_TRANSCRIPTION_MODEL,
+            status="started",
+            session_id=session_id,
+            audio_size=len(
+                audio_bytes
+            ),
+            fallback_used=True,
+        ),
+    )
+
+    try:
+
+        transcription = (
+            openai_client
+            .audio
+            .transcriptions
+            .create(
+                model=OPENAI_TRANSCRIPTION_MODEL,
+                file=(
+                    filename,
+                    audio_bytes,
+                ),
+            )
+        )
+
+        raw_transcript = (
+            getattr(
+                transcription,
+                "text",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if not raw_transcript:
+
+            raise RuntimeError(
+                "OpenAI returned an empty transcription."
+            )
+
+        latency_ms = round(
+            (
+                time.perf_counter()
+                - start_time
+            )
+            * 1000,
+            2,
+        )
+
+        metadata = safe_langfuse_metadata(
+            component="audio_transcription",
+            provider="openai",
+            model=OPENAI_TRANSCRIPTION_MODEL,
+            status="success",
+            session_id=session_id,
+            audio_size=len(
+                audio_bytes
+            ),
+            transcript_length=len(
+                raw_transcript
+            ),
+            latency_ms=latency_ms,
+            fallback_used=True,
+        )
+
+        metadata[
+            "latency_seconds"
+        ] = round(
+            latency_ms / 1000,
+            3,
+        )
+
+        langfuse_output = None
+
+        if should_capture_clinical_data():
+            langfuse_output = raw_transcript
+
+        end_generation(
+            generation,
+            output=langfuse_output,
+            metadata=metadata,
+        )
+
+        print(
+            "Emergency provider fallback succeeded",
+            "| provider: openai",
+            "| model:",
+            OPENAI_TRANSCRIPTION_MODEL,
+            "| time:",
+            f"{latency_ms / 1000:.3f}s",
+        )
+
+        return raw_transcript
+
+    except Exception as error:
+
+        latency_ms = round(
+            (
+                time.perf_counter()
+                - start_time
+            )
+            * 1000,
+            2,
+        )
+
+        end_generation(
+            generation,
+            metadata=safe_langfuse_metadata(
+                component="audio_transcription",
+                provider="openai",
+                model=OPENAI_TRANSCRIPTION_MODEL,
+                status="failed",
+                session_id=session_id,
+                audio_size=len(
+                    audio_bytes
+                ),
+                latency_ms=latency_ms,
+                fallback_used=True,
+                error_type=type(
+                    error
+                ).__name__,
+            ),
+            error=error,
+        )
+
+        raise
+
+
+# ============================================================
+# AUDIO TRANSCRIPTION WITH PROVIDER FALLBACK
+# ============================================================
+
+def transcribe_audio(
+    audio_bytes: bytes,
+    filename: str = "consultation.wav",
+    session_id: str | None = None,
+):
+
+    if not audio_bytes:
+
+        raise ValueError(
+            "Audio file is empty."
+        )
+
+    try:
+
+        raw_transcript = (
+            transcribe_with_model(
+                audio_bytes=audio_bytes,
+                filename=filename,
+                model=PRIMARY_TRANSCRIPTION_MODEL,
+                session_id=session_id,
+                fallback_used=False,
+            )
+        )
+
+        print(
+            "Primary transcription model used:",
+            PRIMARY_TRANSCRIPTION_MODEL,
+        )
+
+    except Exception as primary_error:
+
+        print(
+            "Primary transcription failed:",
+            type(
+                primary_error
+            ).__name__,
+        )
+
+        print(
+            "Switching to Groq fallback:",
+            FALLBACK_TRANSCRIPTION_MODEL,
+        )
+
+        try:
+
+            raw_transcript = (
+                transcribe_with_model(
+                    audio_bytes=audio_bytes,
+                    filename=filename,
+                    model=FALLBACK_TRANSCRIPTION_MODEL,
+                    session_id=session_id,
+                    fallback_used=True,
+                )
+            )
+
+            print(
+                "Groq fallback transcription succeeded:",
+                FALLBACK_TRANSCRIPTION_MODEL,
+            )
+
+        except Exception as groq_fallback_error:
+
+            print(
+                "Groq fallback transcription failed:",
+                type(
+                    groq_fallback_error
+                ).__name__,
+            )
+
+            print(
+                "Switching to emergency OpenAI provider fallback."
+            )
+
+            try:
+
+                raw_transcript = (
+                    transcribe_with_openai(
+                        audio_bytes=audio_bytes,
+                        filename=filename,
+                        session_id=session_id,
+                    )
+                )
+
+            except Exception as openai_error:
+
+                print(
+                    "OpenAI provider fallback failed:",
+                    type(
+                        openai_error
+                    ).__name__,
+                )
+
+                raise RuntimeError(
+                    "All transcription providers failed."
+                ) from openai_error
+
+    formatted_transcript = (
+        format_transcript(
+            raw_transcript,
+            session_id=session_id,
+        )
+    )
+
+    return formatted_transcript

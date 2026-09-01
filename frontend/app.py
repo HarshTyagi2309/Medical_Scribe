@@ -1,71 +1,89 @@
 import os
 from io import BytesIO
+from textwrap import dedent
 
 import requests
 import streamlit as st
-
 from dotenv import load_dotenv
-from handsfree_recorder import render_handsfree_recorder
+
+try:
+    from frontend.handsfree_recorder import render_handsfree_recorder
+except ModuleNotFoundError as error:
+    if error.name != "frontend":
+        raise
+    from handsfree_recorder import render_handsfree_recorder
 
 
 # ============================================================
-# LOAD ENVIRONMENT VARIABLES
+# ENVIRONMENT
 # ============================================================
 
 load_dotenv()
 
 
 # ============================================================
-# BACKEND URL
+# FASTAPI CONFIG
 # ============================================================
 
 def get_fastapi_url():
 
-    environment_url = os.getenv(
+    env_url = os.getenv(
         "FASTAPI_URL",
         "",
     ).strip()
 
-    if environment_url:
-
-        return (
-            environment_url
-            .rstrip("/")
-        )
+    if env_url:
+        return env_url.rstrip("/")
 
     try:
 
-        secret_url = (
-            st.secrets.get(
-                "FASTAPI_URL",
-                ""
-            )
+        secret_url = st.secrets.get(
+            "FASTAPI_URL",
+            "",
         )
 
         if secret_url:
-
-            return (
-                str(secret_url)
-                .strip()
-                .rstrip("/")
-            )
+            return str(secret_url).rstrip("/")
 
     except Exception:
-
         pass
 
-    return (
-        "http://127.0.0.1:8000"
+    return "http://127.0.0.1:8000"
+
+
+FASTAPI_URL = get_fastapi_url()
+
+
+MEDICAL_SCRIBE_API_KEY = os.getenv(
+    "MEDICAL_SCRIBE_API_KEY",
+    "",
+).strip()
+
+
+ADMIN_API_KEY = os.getenv(
+    "ADMIN_API_KEY",
+    "",
+).strip()
+
+
+def api_headers():
+
+    access_token = st.session_state.get(
+        "access_token"
     )
 
+    if not access_token:
+        return {}
 
-FASTAPI_URL = (
-    get_fastapi_url()
-)
+    return {
+        "Authorization": (
+            f"Bearer {access_token}"
+        )
+    }
 
 
 # ============================================================
-# STREAMLIT PAGE
+# PAGE CONFIG
 # ============================================================
 
 st.set_page_config(
@@ -80,182 +98,325 @@ st.set_page_config(
 # SESSION STATE
 # ============================================================
 
-DEFAULTS = {
+SESSION_DEFAULTS = {
+
+    "authenticated": False,
+
+    "access_token": None,
+
+    "username": None,
+
+    "user_role": None,
+
     "record_id": None,
-    "patient_name": "",
-    "patient_id": "",
-    "session_id": "",
+
+    "patient_name": None,
+
+    "patient_id": None,
+
+    "session_id": None,
+
     "transcript": "",
+
     "clinical_data": {},
-    "consultation_date": "",
-    "consultation_time": "",
-    "input_version": 0,
+
+    "date": None,
+
+    "time": None,
+
     "pending_handsfree_audio": None,
+
+    "last_audio_name": None,
+
+    "edit_mode": False,
 }
 
 
-for key, value in DEFAULTS.items():
+for key, value in SESSION_DEFAULTS.items():
 
     if key not in st.session_state:
 
-        st.session_state[
-            key
-        ] = value
+        st.session_state[key] = value
 
 
 # ============================================================
-# RESET
+# RESET CONSULTATION
 # ============================================================
 
 def reset_consultation():
 
-    st.session_state.record_id = None
-    st.session_state.patient_name = ""
-    st.session_state.patient_id = ""
-    st.session_state.session_id = ""
-    st.session_state.transcript = ""
-    st.session_state.clinical_data = {}
-    st.session_state.consultation_date = ""
-    st.session_state.consultation_time = ""
-    st.session_state.input_version += 1
-    st.session_state.pending_handsfree_audio = None
+    auth_keys = {
+        "authenticated",
+        "access_token",
+        "username",
+        "user_role",
+    }
+
+    for key, value in SESSION_DEFAULTS.items():
+
+        if key not in auth_keys:
+
+            st.session_state[key] = value
 
 
 # ============================================================
-# LOAD OLD RECORD
+# RECORD LOADER
 # ============================================================
 
-def load_record(
-    record: dict
-):
+def load_record(record):
 
-    st.session_state.record_id = (
-        record.get("id")
+    st.session_state.record_id = record.get(
+        "id"
     )
 
-    st.session_state.patient_name = (
-        record.get(
-            "patient_name"
-        )
-        or "Not in audio"
+    st.session_state.patient_name = record.get(
+        "patient_name"
     )
 
-    st.session_state.patient_id = (
-        record.get(
-            "patient_id"
-        )
-        or ""
+    st.session_state.patient_id = record.get(
+        "patient_id"
     )
 
-    st.session_state.transcript = (
-        record.get(
-            "transcript"
-        )
-        or ""
+    st.session_state.transcript = record.get(
+        "transcript",
+        "",
     )
 
-    st.session_state.consultation_date = (
-        record.get(
-            "consultation_date"
-        )
-        or ""
+    st.session_state.date = record.get(
+        "date"
     )
 
-    st.session_state.consultation_time = (
-        record.get(
-            "consultation_time"
-        )
-        or ""
+    st.session_state.time = record.get(
+        "time"
     )
 
     st.session_state.clinical_data = {
 
-        "patient_name": (
-            record.get(
-                "patient_name"
-            )
-            or "Not in audio"
+        "patient_name": record.get(
+            "patient_name"
         ),
 
-        "chief_complaint": (
-            record.get(
-                "chief_complaint"
-            )
+        "chief_complaint": record.get(
+            "chief_complaint"
         ),
 
-        "diagnosis": (
-            record.get(
-                "diagnosis"
-            )
+        "symptoms": record.get(
+            "symptoms",
+            [],
         ),
 
-        "vitals": (
-            record.get(
-                "vitals"
-            )
-            or {}
+        "vitals": record.get(
+            "vitals",
+            {},
         ),
 
-        "symptoms": (
-            record.get(
-                "symptoms"
-            )
-            or []
+        "diagnosis": record.get(
+            "diagnosis"
         ),
 
-        "medications": (
-            record.get(
-                "medications"
-            )
-            or []
+        "medications": record.get(
+            "medications",
+            [],
         ),
 
-        "recommended_tests": (
-            record.get(
-                "recommended_tests"
-            )
-            or []
+        "recommended_tests": record.get(
+            "recommended_tests",
+            [],
         ),
 
-        "doctor_instructions": (
-            record.get(
-                "doctor_instructions"
-            )
-            or []
+        "doctor_instructions": record.get(
+            "doctor_instructions",
+            [],
         ),
 
-        "follow_up": (
-            record.get(
-                "follow_up"
-            )
+        "follow_up": record.get(
+            "follow_up"
         ),
     }
 
 
+
 # ============================================================
-# RESPONSIVE CSS
+# DOCTOR CORRECTION HELPERS
+# ============================================================
+
+def list_to_lines(values):
+
+    if not values:
+        return ""
+
+    return "\n".join(
+        str(value)
+        for value in values
+        if value
+    )
+
+
+def lines_to_list(value):
+
+    return [
+        line.strip()
+        for line in value.splitlines()
+        if line.strip()
+    ]
+
+
+def medications_to_lines(
+    medications,
+):
+
+    lines = []
+
+    for medicine in medications or []:
+
+        if isinstance(
+            medicine,
+            dict,
+        ):
+
+            line = " | ".join(
+                [
+                    str(
+                        medicine.get(
+                            "name"
+                        )
+                        or ""
+                    ),
+                    str(
+                        medicine.get(
+                            "dosage"
+                        )
+                        or ""
+                    ),
+                    str(
+                        medicine.get(
+                            "frequency"
+                        )
+                        or ""
+                    ),
+                    str(
+                        medicine.get(
+                            "duration"
+                        )
+                        or ""
+                    ),
+                    str(
+                        medicine.get(
+                            "route"
+                        )
+                        or ""
+                    ),
+                ]
+            )
+
+            lines.append(
+                line
+            )
+
+        elif medicine:
+
+            lines.append(
+                str(medicine)
+            )
+
+    return "\n".join(
+        lines
+    )
+
+
+def lines_to_medications(
+    value,
+):
+
+    medications = []
+
+    for line in value.splitlines():
+
+        line = line.strip()
+
+        if not line:
+            continue
+
+        parts = [
+            part.strip()
+            for part in line.split(
+                "|"
+            )
+        ]
+
+        while len(parts) < 5:
+            parts.append("")
+
+        medications.append(
+            {
+                "name": parts[0],
+                "dosage": parts[1],
+                "frequency": parts[2],
+                "duration": parts[3],
+                "route": parts[4],
+            }
+        )
+
+    return medications
+
+
+# ============================================================
+# BACKEND HEALTH CHECK
+# ============================================================
+
+def get_backend_health():
+
+    try:
+
+        response = requests.get(
+            f"{FASTAPI_URL}/health",
+            timeout=4,
+        )
+
+        if response.status_code == 200:
+
+            return response.json()
+
+    except Exception:
+        pass
+
+    return None
+
+
+# ============================================================
+# API ERROR
+# ============================================================
+
+def show_api_error(response):
+
+    try:
+
+        data = response.json()
+
+        detail = data.get(
+            "detail",
+            "Request failed.",
+        )
+
+    except Exception:
+
+        detail = (
+            "Backend request failed."
+        )
+
+    st.error(detail)
+
+
+# ============================================================
+# STYLING
 # ============================================================
 
 st.markdown(
-    """
+    dedent("""
     <style>
-
-    /* ======================================================
-       DESKTOP / GLOBAL
-       ====================================================== */
 
     .stApp {
         background:
-            radial-gradient(
-                circle at top left,
-                #e0f2fe 0%,
-                transparent 28%
-            ),
-            radial-gradient(
-                circle at top right,
-                #dcfce7 0%,
-                transparent 24%
-            ),
             linear-gradient(
                 180deg,
                 #f8fafc 0%,
@@ -263,328 +424,399 @@ st.markdown(
             );
     }
 
-
     .block-container {
-        max-width: 1450px;
-        padding-top: 1.4rem;
-        padding-bottom: 2rem;
-        padding-left: 2rem;
-        padding-right: 2rem;
+        max-width: 1500px;
+        padding-top: 1.5rem;
+        padding-bottom: 3rem;
     }
 
-
-    #MainMenu {
-        visibility: hidden;
-    }
-
-
-    footer {
-        visibility: hidden;
-    }
-
-
-    header {
-        visibility: hidden;
-    }
-
-
-    /* ======================================================
-       CARDS
-       ====================================================== */
-
-    [data-testid="stVerticalBlockBorderWrapper"] {
-        border-radius: 20px;
-        background:
-            rgba(
-                255,
-                255,
-                255,
-                0.82
+    .main-header {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 18px;
+        padding: 20px 24px;
+        margin-bottom: 18px;
+        box-shadow:
+            0 4px 18px rgba(
+                15,
+                23,
+                42,
+                0.05
             );
     }
 
-
-    /* ======================================================
-       METRICS
-       ====================================================== */
-
-    [data-testid="stMetric"] {
-        background: white;
+    .hero-card {
+        background:
+            linear-gradient(
+                135deg,
+                #ffffff,
+                #f8fafc
+            );
         border: 1px solid #e2e8f0;
         border-radius: 18px;
-        padding: 18px;
-        width: 100%;
+        padding: 24px;
+        margin-bottom: 18px;
     }
 
-
-    /* ======================================================
-       FILE UPLOADER
-       ====================================================== */
-
-    [data-testid="stFileUploader"] {
+    .medical-card {
         background: white;
-        border: 1px dashed #94a3b8;
-        border-radius: 18px;
-        padding: 10px;
-        width: 100%;
-    }
-
-
-    /* ======================================================
-       TEXT AREA
-       ====================================================== */
-
-    [data-testid="stTextArea"] textarea {
+        border: 1px solid #e2e8f0;
         border-radius: 16px;
-        background: #f8fafc;
-        border: 1px solid #e2e8f0;
-        line-height: 1.6;
-        width: 100%;
+        padding: 20px;
+        margin-bottom: 15px;
+        box-shadow:
+            0 2px 12px rgba(
+                15,
+                23,
+                42,
+                0.04
+            );
     }
 
+    .status-online {
+        display: inline-block;
+        padding: 7px 13px;
+        border-radius: 999px;
+        background: #dcfce7;
+        color: #166534;
+        font-weight: 600;
+        font-size: 13px;
+    }
 
-    /* ======================================================
-       BUTTONS
-       ====================================================== */
+    .status-offline {
+        display: inline-block;
+        padding: 7px 13px;
+        border-radius: 999px;
+        background: #fee2e2;
+        color: #991b1b;
+        font-weight: 600;
+        font-size: 13px;
+    }
+
+    .section-title {
+        font-size: 18px;
+        font-weight: 700;
+        color: #0f172a;
+        margin-bottom: 8px;
+    }
+
+    .small-muted {
+        color: #64748b;
+        font-size: 13px;
+    }
+
+    .result-label {
+        color: #64748b;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+    }
+
+    .result-value {
+        color: #0f172a;
+        font-size: 15px;
+        margin-top: 4px;
+    }
+
+    div[data-testid="stMetric"] {
+        background: white;
+        border: 1px solid #e2e8f0;
+        padding: 12px;
+        border-radius: 12px;
+    }
 
     .stButton > button {
-        min-height: 46px;
-        border-radius: 14px;
-        font-weight: 700;
-        width: 100%;
+        border-radius: 10px;
+        font-weight: 600;
     }
 
-
-    /* ======================================================
-       ALERTS
-       ====================================================== */
-
-    [data-testid="stAlert"] {
-        border-radius: 16px;
+    textarea {
+        border-radius: 10px !important;
     }
 
-
-    /* ======================================================
-       AUDIO
-       ====================================================== */
-
-    audio {
-        width: 100% !important;
-        max-width: 100% !important;
-    }
-
-
-    /* ======================================================
-       WEBRTC
-       ====================================================== */
-
-    iframe {
-        max-width: 100% !important;
-    }
-
-
-    /* ======================================================
-       TABS
-       ====================================================== */
-
-    [data-baseweb="tab-list"] {
-        gap: 8px;
-        overflow-x: auto;
-        scrollbar-width: thin;
-    }
-
-
-    [data-baseweb="tab"] {
-        white-space: nowrap;
-    }
-
-
-    /* ======================================================
-       MOBILE
-       ====================================================== */
-
-    @media screen and (max-width: 768px) {
-
-        .block-container {
-            padding-top: 0.8rem !important;
-            padding-bottom: 1.5rem !important;
-            padding-left: 0.75rem !important;
-            padding-right: 0.75rem !important;
-        }
-
-
-        h1 {
-            font-size: 1.8rem !important;
-            line-height: 1.2 !important;
-        }
-
-
-        h2 {
-            font-size: 1.35rem !important;
-        }
-
-
-        h3 {
-            font-size: 1.15rem !important;
-        }
-
-
-        /* ==================================================
-           STACK STREAMLIT COLUMNS
-           ================================================== */
-
-        [data-testid="stHorizontalBlock"] {
-            flex-wrap: wrap !important;
-            gap: 0.75rem !important;
-        }
-
-
-        [data-testid="column"] {
-            width: 100% !important;
-            flex: 1 1 100% !important;
-            min-width: 100% !important;
-        }
-
-
-        /* ==================================================
-           CARDS
-           ================================================== */
-
-        [data-testid="stVerticalBlockBorderWrapper"] {
-            border-radius: 14px !important;
-        }
-
-
-        /* ==================================================
-           METRICS
-           ================================================== */
-
-        [data-testid="stMetric"] {
-            padding: 12px !important;
-            border-radius: 14px !important;
-        }
-
-
-        [data-testid="stMetricLabel"] {
-            font-size: 0.8rem !important;
-        }
-
-
-        [data-testid="stMetricValue"] {
-            font-size: 1.2rem !important;
-        }
-
-
-        /* ==================================================
-           BUTTONS
-           ================================================== */
-
-        .stButton > button {
-            width: 100% !important;
-            min-height: 48px !important;
-            font-size: 0.95rem !important;
-        }
-
-
-        /* ==================================================
-           INPUTS
-           ================================================== */
-
-        input,
-        textarea {
-            font-size: 16px !important;
-        }
-
-
-        /* ==================================================
-           TRANSCRIPT
-           ================================================== */
-
-        [data-testid="stTextArea"] textarea {
-            min-height: 240px !important;
-        }
-
-
-        /* ==================================================
-           TABS
-           ================================================== */
-
-        [data-baseweb="tab-list"] {
-            overflow-x: auto !important;
-            display: flex !important;
-            flex-wrap: nowrap !important;
-        }
-
-
-        [data-baseweb="tab"] {
-            min-width: max-content !important;
-            padding-left: 12px !important;
-            padding-right: 12px !important;
-        }
-
-
-        /* ==================================================
-           FILE UPLOAD
-           ================================================== */
-
-        [data-testid="stFileUploader"] {
-            padding: 8px !important;
-        }
-
-
-        /* ==================================================
-           EXPANDERS
-           ================================================== */
-
-        [data-testid="stExpander"] {
-            width: 100% !important;
-        }
-
-
-        /* ==================================================
-           WEBRTC
-           ================================================== */
-
-        iframe {
-            width: 100% !important;
-            max-width: 100% !important;
-        }
-
-    }
-
-
-    /* ======================================================
-       SMALL PHONES
-       ====================================================== */
-
-    @media screen and (max-width: 480px) {
-
-        .block-container {
-            padding-left: 0.5rem !important;
-            padding-right: 0.5rem !important;
-        }
-
-
-        h1 {
-            font-size: 1.55rem !important;
-        }
-
-
-        p {
-            font-size: 0.92rem !important;
-        }
-
-
-        [data-testid="stMetric"] {
-            padding: 10px !important;
-        }
-
-    }
-
-    </style>
-    """,
-
+    
+/* Analyze & Save Consultation primary button */
+div.stButton > button[kind="primary"] {
+    background-color: #2563EB !important;
+    color: #FFFFFF !important;
+    border: 1px solid #2563EB !important;
+    font-weight: 700 !important;
+}
+
+div.stButton > button[kind="primary"]:hover {
+    background-color: #1D4ED8 !important;
+    color: #FFFFFF !important;
+    border-color: #1D4ED8 !important;
+}
+
+div.stButton > button[kind="primary"]:disabled {
+    background-color: #94A3B8 !important;
+    color: #FFFFFF !important;
+    opacity: 0.85 !important;
+}
+
+</style>
+    """),
     unsafe_allow_html=True,
+)
+
+
+# Responsive visual system. Colors follow the device light/dark preference.
+st.markdown(
+    dedent("""
+    <style>
+    :root {
+        --ms-bg:#f4f7fb; --ms-surface:rgba(255,255,255,.94);
+        --ms-text:#10233f; --ms-muted:#60708a; --ms-border:#dce5ef;
+        --ms-brand:#087f8c; --ms-brand-strong:#066975;
+        --ms-shadow:0 16px 38px rgba(25,55,90,.09);
+    }
+    @media (prefers-color-scheme:dark) {
+        :root {
+            --ms-bg:#09131f; --ms-surface:rgba(18,32,48,.95);
+            --ms-text:#edf6ff; --ms-muted:#a8b8ca; --ms-border:#294057;
+            --ms-brand:#2bc4c9; --ms-brand-strong:#159ba2;
+            --ms-shadow:0 18px 44px rgba(0,0,0,.28);
+        }
+    }
+    .stApp {
+        color:var(--ms-text);
+        background:radial-gradient(circle at 8% 0%,rgba(19,165,174,.13),transparent 28rem),
+                   radial-gradient(circle at 92% 8%,rgba(72,118,255,.10),transparent 24rem),
+                   var(--ms-bg);
+    }
+    .block-container { max-width:1380px; padding:1.4rem 2rem 3rem; }
+    .main-header,.hero-card {
+        background:var(--ms-surface); border:1px solid var(--ms-border);
+        box-shadow:var(--ms-shadow); backdrop-filter:blur(12px);
+    }
+    .main-header { border-radius:22px; padding:22px 26px; margin-bottom:18px; }
+    .main-header h2,.hero-card h3,.section-title,.result-value { color:var(--ms-text)!important; }
+    .main-header p,.hero-card p,.small-muted,.result-label { color:var(--ms-muted)!important; }
+    .hero-card { position:relative; overflow:hidden; border-radius:22px; padding:26px; margin-bottom:22px; }
+    .hero-card::after { content:""; position:absolute; width:180px; height:180px; right:-65px; top:-90px; border-radius:50%; background:rgba(20,184,166,.12); }
+    .small-muted { color:var(--ms-brand)!important; font-weight:700; }
+    .status-online,.status-offline { display:inline-flex; align-items:center; padding:8px 13px; border-radius:999px; font-weight:700; font-size:12px; }
+    .status-online { background:rgba(34,197,94,.13); color:#16803b; border:1px solid rgba(34,197,94,.22); }
+    .status-offline { background:rgba(239,68,68,.12); color:#c42b2b; border:1px solid rgba(239,68,68,.22); }
+    .section-title { font-size:1.15rem; margin-bottom:10px; }
+    div[data-testid="stMetric"] { min-height:96px; background:var(--ms-surface); border:1px solid var(--ms-border); padding:15px; border-radius:16px; box-shadow:0 7px 22px rgba(15,23,42,.05); }
+    div[data-testid="stMetricLabel"] { color:var(--ms-muted); }
+    div[data-testid="stMetricValue"] { color:var(--ms-text); font-size:1.18rem; }
+    div[data-testid="stTabs"] [data-baseweb="tab-list"] { gap:8px; overflow-x:auto; }
+    div[data-testid="stTabs"] button { border-radius:12px 12px 0 0; white-space:nowrap; }
+    div[data-testid="stExpander"],div[data-testid="stFileUploaderDropzone"],textarea { border-color:var(--ms-border)!important; border-radius:14px!important; }
+    .stButton>button { min-height:2.75rem; border-radius:12px; font-weight:700; }
+    .stButton>button[kind="primary"] { border:0; background:linear-gradient(135deg,var(--ms-brand),var(--ms-brand-strong)); }
+    hr { border-color:var(--ms-border)!important; }
+    @media (max-width:768px) {
+        .block-container { padding:.8rem .85rem 2rem; }
+        .main-header,.hero-card { border-radius:17px; padding:18px; }
+        .main-header p { font-size:.9rem; }
+        .hero-card::after { display:none; }
+        div[data-testid="stHorizontalBlock"] { gap:.75rem; }
+        div[data-testid="column"] { min-width:0!important; }
+        div[data-testid="stMetric"] { min-height:84px; padding:12px; }
+    }
+    </style>
+    """),
+    unsafe_allow_html=True,
+)
+
+
+# ============================================================
+# LOGIN
+# ============================================================
+
+if not st.session_state.get(
+    "authenticated"
+):
+
+    st.markdown(
+        """
+        <div style="
+            max-width:520px;
+            margin:50px auto 20px auto;
+            text-align:center;
+        ">
+            <h1> Medical Scribe AI</h1>
+            <p>
+                Secure clinical documentation assistant
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    login_left, login_center, login_right = (
+        st.columns([1, 1.2, 1])
+    )
+
+    with login_center:
+
+        with st.form(
+            "login_form"
+        ):
+
+            st.markdown(
+                "### Sign in as Doctor and Admin"
+            )
+
+            username = st.text_input(
+                "Username"
+            )
+
+            password = st.text_input(
+                "Password",
+                type="password",
+            )
+
+            login_button = (
+                st.form_submit_button(
+                    "Login",
+                    type="primary",
+                    use_container_width=True,
+                )
+            )
+
+
+        if login_button:
+
+            if (
+                not username.strip()
+                or not password
+            ):
+
+                st.warning(
+                    "Enter username and password."
+                )
+
+            else:
+
+                try:
+
+                    with st.spinner(
+                        "Signing in..."
+                    ):
+
+                        response = requests.post(
+                            f"{FASTAPI_URL}/auth/login",
+                            json={
+                                "username": username.strip(),
+                                "password": password,
+                            },
+                            timeout=15,
+                        )
+
+
+                    if response.status_code == 200:
+
+                        result = response.json()
+
+                        st.session_state[
+                            "authenticated"
+                        ] = True
+
+                        st.session_state[
+                            "access_token"
+                        ] = result.get(
+                            "access_token"
+                        )
+
+                        st.session_state[
+                            "username"
+                        ] = result.get(
+                            "username"
+                        )
+
+                        st.session_state[
+                            "user_role"
+                        ] = result.get(
+                            "role"
+                        )
+
+                        st.rerun()
+
+                    else:
+
+                        st.error(
+                            "Invalid username or password."
+                        )
+
+
+                except requests.exceptions.ConnectionError:
+
+                    st.error(
+                        "Cannot connect to Medical Scribe server."
+                    )
+
+
+                except requests.exceptions.Timeout:
+
+                    st.error(
+                        "Login request timed out."
+                    )
+
+
+                except Exception as error:
+
+                    st.error(
+                        "Unable to sign in."
+                    )
+
+                    print(
+                        "Login error:",
+                        type(error).__name__,
+                    )
+
+
+    st.stop()
+
+
+# ============================================================
+# LOGOUT
+# ============================================================
+
+logout_col1, logout_col2 = st.columns(
+    [5, 1]
+)
+
+with logout_col1:
+
+    st.caption(
+        "Signed in as "
+        f"{st.session_state.get('username')} "
+        f"({st.session_state.get('user_role')})"
+    )
+
+
+with logout_col2:
+
+    if st.button(
+        "Logout",
+        use_container_width=True,
+    ):
+
+        for key in list(
+            st.session_state.keys()
+        ):
+
+            del st.session_state[key]
+
+        st.rerun()
+
+
+# ============================================================
+# HEALTH
+# ============================================================
+
+health = get_backend_health()
+
+backend_online = (
+    health is not None
+    and health.get("status")
+    == "healthy"
 )
 
 
@@ -592,30 +824,62 @@ st.markdown(
 # HEADER
 # ============================================================
 
-header_left, header_right = (
-    st.columns(
-        [5, 1.3]
-    )
+header_left, header_right = st.columns(
+    [5, 1.5]
 )
 
 
 with header_left:
 
-    st.title(
-        "🩺 Medical Scribe AI"
-    )
-
-    st.caption(
-        "Doctor–Patient Conversation "
-        "Intelligence Platform"
+    st.markdown(
+        dedent("""
+        <div class="main-header">
+            <h2 style="
+                margin:0;
+                color:#0f172a;
+            ">
+                🩺 Medical Scribe AI
+            </h2>
+            <p style="
+                margin:6px 0 0 0;
+                color:#64748b;
+            ">
+                AI-assisted clinical consultation
+                transcription and structured documentation
+            </p>
+        </div>
+        """),
+        unsafe_allow_html=True,
     )
 
 
 with header_right:
 
-    st.success(
-        "● System Online"
-    )
+    st.write("")
+
+    if backend_online:
+
+        st.markdown(
+            dedent("""
+            <div class="status-online">
+                ● Backend Online
+            </div>
+            """),
+            unsafe_allow_html=True,
+        )
+
+    else:
+
+        st.markdown(
+            dedent("""
+            <div class="status-offline">
+                ● Backend Offline
+            </div>
+            """),
+            unsafe_allow_html=True,
+        )
+
+    st.write("")
 
     if st.button(
         "＋ New Consultation",
@@ -631,74 +895,41 @@ with header_right:
 # HERO
 # ============================================================
 
-with st.container(
-    border=True
-):
-
-    st.subheader(
-        "AI Clinical Consultation Assistant"
-    )
-
-    st.write(
-        "Record or upload a doctor-patient conversation. "
-        "Medical Scribe AI will transcribe, extract "
-        "structured clinical information and securely "
-        "store the consultation."
-    )
-
-
-    h1, h2, h3, h4, h5 = (
-        st.columns(5)
-    )
-
-
-    with h1:
-
-        st.caption(
-            "🎙️ Record"
-        )
-
-
-    with h2:
-
-        st.caption(
-            "📝 Transcribe"
-        )
-
-
-    with h3:
-
-        st.caption(
-            "🧠 Extract"
-        )
-
-
-    with h4:
-
-        st.caption(
-            "💾 Store"
-        )
-
-
-    with h5:
-
-        st.caption(
-            "📊 Observe"
-        )
-
-
-st.write("")
+st.markdown(
+    dedent("""
+    <div class="hero-card">
+        <h3 style="
+            margin-top:0;
+            color:#0f172a;
+        ">
+            Clinical Consultation Assistant
+        </h3>
+        <p style="
+            color:#475569;
+            margin-bottom:12px;
+        ">
+            Record or upload a doctor-patient consultation.
+            The system transcribes the conversation,
+            extracts structured clinical information,
+            and stores the consultation using encrypted
+            local storage.
+        </p>
+        <div class="small-muted">
+            Record → Transcribe → Extract → Encrypt → Store → Observe
+        </div>
+    </div>
+    """),
+    unsafe_allow_html=True,
+)
 
 
 # ============================================================
-# MAIN
+# MAIN COLUMNS
 # ============================================================
 
-left_col, right_col = (
-    st.columns(
-        [1, 1.25],
-        gap="large",
-    )
+left_column, right_column = st.columns(
+    [1.05, 1],
+    gap="large",
 )
 
 
@@ -706,510 +937,452 @@ left_col, right_col = (
 # LEFT COLUMN
 # ============================================================
 
-with left_col:
+with left_column:
+
+    st.markdown(
+        '<div class="section-title">New Consultation</div>',
+        unsafe_allow_html=True,
+    )
+
+    input_tabs = st.tabs(
+        [
+            "🎙️ Hands-Free",
+            "🎤 Manual Record",
+            "📁 Upload Audio",
+        ]
+    )
+
 
     # ========================================================
-    # NEW CONSULTATION
+    # HANDS FREE
     # ========================================================
 
-    with st.container(
-        border=True
-    ):
-
-        st.subheader(
-            "🎙️ New Consultation"
-        )
+    with input_tabs[0]:
 
         st.caption(
-            "Patient name is extracted automatically "
-            "when explicitly spoken."
+            "Hands-Free mode listens for the configured "
+            "wake phrase and automatically stops after silence."
         )
 
-
-        # ====================================================
-        # INPUT TABS
-        # ====================================================
-
-        handsfree_tab, record_tab, upload_tab = (
-            st.tabs(
-                [
-                    "🗣️ Hands-Free",
-                    "🎙️ Manual Record",
-                    "📁 Upload Audio",
-                ]
-            )
-        )
-
-
-        recorded_audio = None
-        uploaded_audio = None
-
-
-        # ====================================================
-        # HANDS FREE
-        # ====================================================
-
-        with handsfree_tab:
+        try:
 
             render_handsfree_recorder()
 
+        except Exception:
 
-        # ====================================================
-        # MANUAL RECORD
-        # ====================================================
-
-        with record_tab:
-
-            recorded_audio = (
-                st.audio_input(
-
-                    "Record doctor-patient consultation",
-
-                    sample_rate=16000,
-
-                    key=(
-                        "recorder_"
-                        f"{st.session_state.input_version}"
-                    ),
-                )
+            st.warning(
+                "Hands-Free recorder is currently unavailable. "
+                "Use Manual Record or Upload Audio."
             )
 
 
-            if recorded_audio:
+    # ========================================================
+    # MANUAL RECORD
+    # ========================================================
 
-                st.audio(
-                    recorded_audio
-                )
+    with input_tabs[1]:
 
+        st.caption(
+            "Record the consultation directly "
+            "from your microphone."
+        )
 
-        # ====================================================
-        # UPLOAD
-        # ====================================================
-
-        with upload_tab:
-
-            uploaded_audio = (
-                st.file_uploader(
-
-                    "Upload consultation audio",
-
-                    type=[
-                        "wav",
-                        "mp3",
-                        "m4a",
-                        "ogg",
-                        "webm",
-                    ],
-
-                    key=(
-                        "uploader_"
-                        f"{st.session_state.input_version}"
-                    ),
-                )
-            )
-
-
-            if uploaded_audio:
-
-                st.audio(
-                    uploaded_audio
-                )
-
-
-        # ====================================================
-        # AUDIO SOURCE
-        # ====================================================
-
-        audio_source = None
-        audio_name = None
-        audio_type = None
-        auto_analyze = False
-
-
-        pending_handsfree_audio = (
-            st.session_state.get(
-                "pending_handsfree_audio"
-            )
+        manual_audio = st.audio_input(
+            "Record consultation",
+            sample_rate=16000,
         )
 
 
-        # ====================================================
-        # HANDS FREE AUDIO
-        # ====================================================
+    # ========================================================
+    # UPLOAD AUDIO
+    # ========================================================
 
-        if pending_handsfree_audio:
+    with input_tabs[2]:
 
-            audio_source = (
+        st.caption(
+            "Upload an existing consultation audio file."
+        )
+
+        uploaded_audio = st.file_uploader(
+            "Choose audio file",
+            type=[
+                "wav",
+                "mp3",
+                "m4a",
+                "ogg",
+                "webm",
+            ],
+        )
+
+
+    # ========================================================
+    # SELECT AUDIO SOURCE
+    # ========================================================
+
+    selected_audio_bytes = None
+    selected_audio_name = None
+    auto_analyze = False
+
+
+    pending_handsfree_audio = (
+        st.session_state.get(
+            "pending_handsfree_audio"
+        )
+    )
+
+
+    if pending_handsfree_audio:
+
+        selected_audio_bytes = (
+            pending_handsfree_audio
+        )
+
+        selected_audio_name = (
+            "handsfree_consultation.wav"
+        )
+
+        auto_analyze = True
+
+
+    elif manual_audio is not None:
+
+        selected_audio_bytes = (
+            manual_audio.getvalue()
+        )
+
+        selected_audio_name = (
+            "manual_consultation.wav"
+        )
+
+
+    elif uploaded_audio is not None:
+
+        selected_audio_bytes = (
+            uploaded_audio.getvalue()
+        )
+
+        selected_audio_name = (
+            uploaded_audio.name
+        )
+
+
+    # ========================================================
+    # AUDIO PREVIEW
+    # ========================================================
+
+    if selected_audio_bytes:
+
+        st.audio(
+            selected_audio_bytes
+        )
+
+        st.caption(
+            f"Selected audio: {selected_audio_name}"
+        )
+
+
+    # ========================================================
+    # PROCESS FUNCTION
+    # ========================================================
+
+    def process_consultation():
+
+        if not backend_online:
+
+            st.error(
+                "Backend is offline. Start FastAPI first."
+            )
+
+            return
+
+
+        if not MEDICAL_SCRIBE_API_KEY:
+
+            st.error(
+                "MEDICAL_SCRIBE_API_KEY is missing from .env"
+            )
+
+            return
+
+
+        if not selected_audio_bytes:
+
+            st.warning(
+                "Record or upload an audio file first."
+            )
+
+            return
+
+
+        files = {
+
+            "audio": (
+                selected_audio_name,
                 BytesIO(
-                    pending_handsfree_audio
+                    selected_audio_bytes
+                ),
+            )
+        }
+
+
+        try:
+
+            with st.spinner(
+                "Processing consultation..."
+            ):
+
+                response = requests.post(
+
+                    f"{FASTAPI_URL}/process-consultation",
+
+                    files=files,
+
+                    headers=api_headers(),
+
+                    timeout=240,
                 )
-            )
 
 
-            audio_name = (
-                "handsfree_consultation.wav"
-            )
+            if response.status_code != 200:
+
+                show_api_error(
+                    response
+                )
+
+                return
 
 
-            audio_type = (
-                "audio/wav"
-            )
+            result = response.json()
 
 
-            auto_analyze = True
+            # =================================================
+            # DUPLICATE
+            # =================================================
 
-
-        # ====================================================
-        # MANUAL AUDIO
-        # ====================================================
-
-        elif recorded_audio:
-
-            audio_source = (
-                recorded_audio
-            )
-
-
-            audio_name = (
-                "recorded_consultation.wav"
-            )
-
-
-            audio_type = (
-                "audio/wav"
-            )
-
-
-        # ====================================================
-        # UPLOADED AUDIO
-        # ====================================================
-
-        elif uploaded_audio:
-
-            audio_source = (
-                uploaded_audio
-            )
-
-
-            audio_name = (
-                uploaded_audio.name
-            )
-
-
-            audio_type = (
-                uploaded_audio.type
-                or "audio/wav"
-            )
-
-
-        # ====================================================
-        # ANALYZE BUTTON
-        # ====================================================
-
-        manual_analyze = (
-            st.button(
-                "✨ Analyze & Save Consultation",
-                type="primary",
-                use_container_width=True,
-            )
-        )
-
-
-        analyze = (
-            manual_analyze
-            or auto_analyze
-        )
-
-
-        # ====================================================
-        # PROCESS
-        # ====================================================
-
-        if analyze:
-
-            if audio_source is None:
+            if result.get(
+                "duplicate"
+            ):
 
                 st.warning(
-                    "Please record or upload "
-                    "consultation audio first."
+                    "This audio has already been processed."
                 )
 
+                record_id = result.get(
+                    "record_id"
+                )
 
-            else:
+                if record_id:
 
-                try:
+                    record_response = requests.get(
 
-                    with st.spinner(
-                        "Transcribing, analyzing "
-                        "and saving consultation..."
-                    ):
+                        f"{FASTAPI_URL}/records/{record_id}",
 
+                        headers=api_headers(),
 
-                        files = {
-
-                            "audio": (
-
-                                audio_name,
-
-                                audio_source.getvalue(),
-
-                                audio_type,
-                            )
-                        }
-
-
-                        response = (
-                            requests.post(
-
-                                (
-                                    f"{FASTAPI_URL}"
-                                    "/process-consultation"
-                                ),
-
-                                files=files,
-
-                                timeout=240,
-                            )
-                        )
-
-
-                    # ========================================
-                    # SUCCESS
-                    # ========================================
-
-                    if (
-                        response.status_code
-                        == 200
-                    ):
-
-                        result = (
-                            response.json()
-                        )
-
-
-                        # ====================================
-                        # DUPLICATE
-                        # ====================================
-
-                        if result.get(
-                            "duplicate"
-                        ):
-
-                            st.warning(
-                                "This consultation audio "
-                                "has already been processed."
-                            )
-
-
-                            st.info(
-                                "Existing Record ID: "
-                                f"{result.get('record_id')}"
-                            )
-
-
-                        # ====================================
-                        # NEW RECORD
-                        # ====================================
-
-                        else:
-
-                            st.session_state.record_id = (
-                                result.get(
-                                    "record_id"
-                                )
-                            )
-
-
-                            st.session_state.patient_name = (
-                                result.get(
-                                    "patient_name",
-                                    "Not in audio",
-                                )
-                            )
-
-
-                            st.session_state.patient_id = (
-                                result.get(
-                                    "patient_id",
-                                    "",
-                                )
-                            )
-
-
-                            st.session_state.session_id = (
-                                result.get(
-                                    "session_id",
-                                    "",
-                                )
-                            )
-
-
-                            st.session_state.transcript = (
-                                result.get(
-                                    "transcript",
-                                    "",
-                                )
-                            )
-
-
-                            st.session_state.clinical_data = (
-                                result.get(
-                                    "clinical_data",
-                                    {},
-                                )
-                            )
-
-
-                            st.session_state.consultation_date = (
-                                result.get(
-                                    "consultation_date",
-                                    "",
-                                )
-                            )
-
-
-                            st.session_state.consultation_time = (
-                                result.get(
-                                    "consultation_time",
-                                    "",
-                                )
-                            )
-
-
-                            st.success(
-                                "Consultation analyzed "
-                                "and saved successfully."
-                            )
-
-
-                    # ========================================
-                    # ERROR
-                    # ========================================
-
-                    else:
-
-                        print(
-                            "Consultation processing failed:",
-                            response.status_code,
-                            response.text,
-                        )
-
-
-                        st.error(
-                            "Please try again after some time."
-                        )
-
-
-                except Exception as error:
-
-                    print(
-                        "Consultation processing error:",
-                        repr(
-                            error
-                        ),
+                        timeout=20,
                     )
 
 
-                    st.error(
-                        "Please try again after some time."
-                    )
+                    if record_response.status_code == 200:
+
+                        load_record(
+                            record_response.json()
+                        )
+
+                st.session_state[
+                    "pending_handsfree_audio"
+                ] = None
+
+                st.rerun()
+
+                return
 
 
-                finally:
+            # =================================================
+            # NEW RESULT
+            # =================================================
 
-                    if auto_analyze:
-
-                        st.session_state[
-                            "pending_handsfree_audio"
-                        ] = None
-
-
-    # ========================================================
-    # PATIENT INFORMATION
-    # ========================================================
-
-    with st.container(
-        border=True
-    ):
-
-        st.subheader(
-            "👤 Patient & Consultation"
-        )
-
-
-        p1, p2 = (
-            st.columns(
-                2
+            st.session_state.record_id = (
+                result.get(
+                    "record_id"
+                )
             )
+
+            st.session_state.patient_name = (
+                result.get(
+                    "patient_name"
+                )
+            )
+
+            st.session_state.patient_id = (
+                result.get(
+                    "patient_id"
+                )
+            )
+
+            st.session_state.session_id = (
+                result.get(
+                    "session_id"
+                )
+            )
+
+            timestamp = (
+                result.get(
+                    "timestamp"
+                )
+                or {}
+            )
+
+            st.session_state.date = (
+                timestamp.get(
+                    "date"
+                )
+            )
+
+            st.session_state.time = (
+                timestamp.get(
+                    "time"
+                )
+            )
+
+            st.session_state.transcript = (
+                result.get(
+                    "transcript",
+                    "",
+                )
+            )
+
+            st.session_state.clinical_data = (
+                result.get(
+                    "clinical_data"
+                )
+                or {}
+            )
+
+            st.session_state[
+                "pending_handsfree_audio"
+            ] = None
+
+
+            st.success(
+                "Consultation processed and saved successfully."
+            )
+
+            st.rerun()
+
+
+        except requests.exceptions.Timeout:
+
+            st.error(
+                "Processing timed out. "
+                "Please try again."
+            )
+
+
+        except requests.exceptions.ConnectionError:
+
+            st.error(
+                "Cannot connect to FastAPI backend."
+            )
+
+
+        except Exception as error:
+
+            st.error(
+                "Unexpected frontend error."
+            )
+
+            print(
+                "Frontend processing error:",
+                type(error).__name__,
+            )
+
+
+    # ========================================================
+    # PROCESS BUTTON
+    # ========================================================
+
+    analyze_button = st.button(
+        "✨ Analyze & Save Consultation",
+        type="primary",
+        use_container_width=True,
+        disabled=(
+            selected_audio_bytes
+            is None
+        ),
+    )
+
+
+    if analyze_button:
+
+        process_consultation()
+
+
+    if auto_analyze:
+
+        st.session_state[
+            "pending_handsfree_audio"
+        ] = None
+
+        process_consultation()
+
+
+    # ========================================================
+    # PATIENT INFO
+    # ========================================================
+
+    if st.session_state.record_id:
+
+        st.divider()
+
+        st.markdown(
+            '<div class="section-title">Patient Information</div>',
+            unsafe_allow_html=True,
+        )
+
+        patient_col1, patient_col2 = st.columns(
+            2
         )
 
 
-        with p1:
+        with patient_col1:
 
             st.metric(
                 "Patient Name",
-
-                (
-                    st.session_state.patient_name
-                    or "—"
-                ),
+                st.session_state.patient_name
+                or "Not in audio",
             )
 
 
-        with p2:
+        with patient_col2:
 
             st.metric(
                 "Patient ID",
-
-                (
-                    st.session_state.patient_id
-                    or "—"
-                ),
+                st.session_state.patient_id
+                or "N/A",
             )
 
 
-        r1, r2, r3 = (
-            st.columns(
-                3
-            )
+        date_col, time_col = st.columns(
+            2
         )
 
 
-        with r1:
-
-            st.metric(
-                "Record ID",
-
-                (
-                    st.session_state.record_id
-                    or "—"
-                ),
-            )
-
-
-        with r2:
+        with date_col:
 
             st.metric(
                 "Date",
-
-                (
-                    st.session_state
-                    .consultation_date
-                    or "—"
-                ),
+                st.session_state.date
+                or "N/A",
             )
 
 
-        with r3:
+        with time_col:
 
             st.metric(
                 "Time",
-
-                (
-                    st.session_state
-                    .consultation_time
-                    or "—"
-                ),
+                st.session_state.time
+                or "N/A",
             )
 
 
@@ -1217,160 +1390,150 @@ with left_col:
     # TRANSCRIPT
     # ========================================================
 
-    with st.container(
-        border=True
-    ):
+    st.divider()
 
-        st.subheader(
-            "📝 Conversation Transcript"
+    st.markdown(
+        '<div class="section-title">Consultation Transcript</div>',
+        unsafe_allow_html=True,
+    )
+
+
+    transcript_display = st.session_state.get(
+        "transcript",
+        "",
+    )
+
+
+    if transcript_display:
+
+        st.text_area(
+            "Transcript",
+            value=transcript_display,
+            height=300,
+            disabled=True,
+            label_visibility="collapsed",
         )
 
+    else:
 
-        if st.session_state.transcript:
-
-            st.text_area(
-
-                "Transcript",
-
-                value=(
-                    st.session_state
-                    .transcript
-                ),
-
-                height=350,
-
-                label_visibility="collapsed",
-            )
-
-
-        else:
-
-            st.info(
-                "No consultation processed yet."
-            )
+        st.info(
+            "Transcript will appear here after processing."
+        )
 
 
 # ============================================================
 # RIGHT COLUMN
 # ============================================================
 
-with right_col:
+with right_column:
 
-    clinical = (
-        st.session_state.clinical_data
+    st.markdown(
+        '<div class="section-title">Clinical Summary</div>',
+        unsafe_allow_html=True,
     )
 
 
-    vitals = (
-        clinical.get(
-            "vitals",
-            {},
+    clinical_data = (
+        st.session_state.get(
+            "clinical_data"
         )
+        or {}
     )
 
 
-    # ========================================================
-    # VITALS
-    # ========================================================
+    if not clinical_data:
 
-    with st.container(
-        border=True
-    ):
-
-        st.subheader(
-            "❤️ Patient Vitals"
+        st.info(
+            "Structured clinical information "
+            "will appear here after processing."
         )
 
 
-        v1, v2 = (
-            st.columns(
-                2
+    else:
+
+        vitals = (
+            clinical_data.get(
+                "vitals"
             )
+            or {}
         )
 
 
-        with v1:
+        # ====================================================
+        # VITALS
+        # ====================================================
+
+        st.markdown(
+            "#### Vitals"
+        )
+
+        vital_col1, vital_col2 = st.columns(
+            2
+        )
+
+        vital_col3, vital_col4 = st.columns(
+            2
+        )
+
+
+        with vital_col1:
 
             st.metric(
-                "🩸 Blood Pressure",
-
-                (
-                    vitals.get(
-                        "blood_pressure"
-                    )
-                    or "—"
-                ),
+                "Blood Pressure",
+                vitals.get(
+                    "blood_pressure"
+                )
+                or "Not recorded",
             )
 
 
-        with v2:
+        with vital_col2:
 
             st.metric(
-                "❤️ Heart Rate",
-
-                (
-                    vitals.get(
-                        "heart_rate"
-                    )
-                    or "—"
-                ),
+                "Heart Rate",
+                vitals.get(
+                    "heart_rate"
+                )
+                or "Not recorded",
             )
 
 
-        v3, v4 = (
-            st.columns(
-                2
-            )
-        )
-
-
-        with v3:
+        with vital_col3:
 
             st.metric(
-                "🌡️ Temperature",
-
-                (
-                    vitals.get(
-                        "temperature"
-                    )
-                    or "—"
-                ),
+                "Temperature",
+                vitals.get(
+                    "temperature"
+                )
+                or "Not recorded",
             )
 
 
-        with v4:
+        with vital_col4:
 
             st.metric(
-                "🫁 SpO₂",
-
-                (
-                    vitals.get(
-                        "oxygen_saturation"
-                    )
-                    or "—"
-                ),
+                "SpO₂",
+                vitals.get(
+                    "oxygen_saturation"
+                )
+                or "Not recorded",
             )
 
 
-    # ========================================================
-    # DIAGNOSIS
-    # ========================================================
+        st.divider()
 
-    with st.container(
-        border=True
-    ):
 
-        st.subheader(
-            "🩺 Disease / Diagnosis"
+        # ====================================================
+        # DIAGNOSIS
+        # ====================================================
+
+        st.markdown(
+            "#### Diagnosis"
         )
 
-
-        diagnosis = (
-            clinical.get(
-                "diagnosis"
-            )
+        diagnosis = clinical_data.get(
+            "diagnosis"
         )
-
 
         if diagnosis:
 
@@ -1378,55 +1541,54 @@ with right_col:
                 diagnosis
             )
 
+        else:
+
+            st.caption(
+                "No explicit diagnosis stated in audio."
+            )
+
+
+        # ====================================================
+        # CHIEF COMPLAINT
+        # ====================================================
+
+        st.markdown(
+            "#### Chief Complaint"
+        )
+
+        chief_complaint = (
+            clinical_data.get(
+                "chief_complaint"
+            )
+        )
+
+        if chief_complaint:
+
+            st.write(
+                chief_complaint
+            )
 
         else:
 
-            st.info(
-                "No diagnosis explicitly mentioned."
+            st.caption(
+                "Not available"
             )
 
 
-    # ========================================================
-    # CHIEF COMPLAINT
-    # ========================================================
+        # ====================================================
+        # SYMPTOMS
+        # ====================================================
 
-    with st.container(
-        border=True
-    ):
-
-        st.subheader(
-            "🗣️ Chief Complaint"
+        st.markdown(
+            "#### Symptoms"
         )
-
-
-        st.write(
-            clinical.get(
-                "chief_complaint"
-            )
-            or "Not mentioned"
-        )
-
-
-    # ========================================================
-    # SYMPTOMS
-    # ========================================================
-
-    with st.container(
-        border=True
-    ):
-
-        st.subheader(
-            "🤒 Symptoms"
-        )
-
 
         symptoms = (
-            clinical.get(
-                "symptoms",
-                [],
+            clinical_data.get(
+                "symptoms"
             )
+            or []
         )
-
 
         if symptoms:
 
@@ -1436,32 +1598,26 @@ with right_col:
                     f"• {symptom}"
                 )
 
-
         else:
 
-            st.info(
+            st.caption(
                 "No symptoms extracted."
             )
 
 
-    # ========================================================
-    # MEDICINES
-    # ========================================================
+        # ====================================================
+        # MEDICATIONS
+        # ====================================================
 
-    with st.container(
-        border=True
-    ):
-
-        st.subheader(
-            "💊 Medicines"
+        st.markdown(
+            "#### Medications"
         )
 
-
         medications = (
-            clinical.get(
-                "medications",
-                [],
+            clinical_data.get(
+                "medications"
             )
+            or []
         )
 
 
@@ -1469,362 +1625,908 @@ with right_col:
 
             for index, medicine in enumerate(
                 medications,
-                1,
+                start=1,
             ):
 
-
-                st.markdown(
-                    f"**{index}. "
-                    f"{medicine.get('name')}**"
-                )
-
-
-                m1, m2 = (
-                    st.columns(
-                        2
-                    )
-                )
-
-
-                with m1:
-
-                    st.caption(
-                        "Dosage"
-                    )
-
-
-                    st.write(
-                        medicine.get(
-                            "dosage"
-                        )
-                        or "—"
-                    )
-
-
-                    st.caption(
-                        "Frequency"
-                    )
-
-
-                    st.write(
-                        medicine.get(
-                            "frequency"
-                        )
-                        or "—"
-                    )
-
-
-                with m2:
-
-                    st.caption(
-                        "Duration"
-                    )
-
-
-                    st.write(
-                        medicine.get(
-                            "duration"
-                        )
-                        or "—"
-                    )
-
-
-                    st.caption(
-                        "Route"
-                    )
-
-
-                    st.write(
-                        medicine.get(
-                            "route"
-                        )
-                        or "—"
-                    )
-
-
-                if (
-                    index
-                    < len(
-                        medications
-                    )
+                if isinstance(
+                    medicine,
+                    dict,
                 ):
 
-                    st.divider()
+                    medicine_name = (
+                        medicine.get(
+                            "name"
+                        )
+                        or "Medication"
+                    )
 
+                    with st.expander(
+                        f"{index}. {medicine_name}"
+                    ):
+
+                        st.write(
+                            "**Dosage:**",
+                            medicine.get(
+                                "dosage"
+                            )
+                            or "Not stated",
+                        )
+
+                        st.write(
+                            "**Frequency:**",
+                            medicine.get(
+                                "frequency"
+                            )
+                            or "Not stated",
+                        )
+
+                        st.write(
+                            "**Duration:**",
+                            medicine.get(
+                                "duration"
+                            )
+                            or "Not stated",
+                        )
+
+                        st.write(
+                            "**Route:**",
+                            medicine.get(
+                                "route"
+                            )
+                            or "Not stated",
+                        )
+
+                else:
+
+                    st.write(
+                        f"• {medicine}"
+                    )
 
         else:
 
-            st.info(
-                "No medicines extracted."
+            st.caption(
+                "No medications extracted."
             )
 
 
-    # ========================================================
-    # TESTS
-    # ========================================================
+        # ====================================================
+        # TESTS
+        # ====================================================
 
-    with st.container(
-        border=True
-    ):
-
-        st.subheader(
-            "🧪 Recommended Tests"
+        st.markdown(
+            "#### Recommended Tests"
         )
 
-
-        tests = (
-            clinical.get(
-                "recommended_tests",
-                [],
+        recommended_tests = (
+            clinical_data.get(
+                "recommended_tests"
             )
+            or []
         )
 
 
-        if tests:
+        if recommended_tests:
 
-            for test in tests:
+            for test in recommended_tests:
 
                 st.write(
                     f"• {test}"
                 )
 
-
         else:
 
-            st.info(
-                "No tests mentioned."
+            st.caption(
+                "No tests recommended."
             )
 
 
-    # ========================================================
-    # DOCTOR INSTRUCTIONS
-    # ========================================================
+        # ====================================================
+        # DOCTOR INSTRUCTIONS
+        # ====================================================
 
-    with st.container(
-        border=True
-    ):
-
-        st.subheader(
-            "📌 Doctor Instructions"
+        st.markdown(
+            "#### Doctor Instructions"
         )
 
-
-        instructions = (
-            clinical.get(
-                "doctor_instructions",
-                [],
+        doctor_instructions = (
+            clinical_data.get(
+                "doctor_instructions"
             )
+            or []
         )
 
 
-        if instructions:
+        if doctor_instructions:
 
-            for instruction in instructions:
+            for instruction in doctor_instructions:
 
                 st.write(
                     f"• {instruction}"
                 )
 
-
         else:
 
-            st.info(
+            st.caption(
                 "No instructions extracted."
             )
 
 
-    # ========================================================
-    # FOLLOW UP
-    # ========================================================
+        # ====================================================
+        # FOLLOW UP
+        # ====================================================
 
-    with st.container(
-        border=True
-    ):
-
-        st.subheader(
-            "📅 Follow-up"
+        st.markdown(
+            "#### Follow Up"
         )
 
-
-        st.write(
-            clinical.get(
+        follow_up = (
+            clinical_data.get(
                 "follow_up"
             )
-            or "Not mentioned"
         )
+
+
+        if follow_up:
+
+            st.write(
+                follow_up
+            )
+
+        else:
+
+            st.caption(
+                "No follow-up information stated."
+            )
+
+
+
+# ============================================================
+# DOCTOR CORRECTION
+# ============================================================
+
+if (
+    st.session_state.record_id
+    and st.session_state.clinical_data
+):
+
+    st.divider()
+
+    st.markdown(
+        "## ✏️ Doctor Correction"
+    )
+
+    st.caption(
+        "The consultation was already saved automatically. "
+        "Use this section only if a healthcare professional "
+        "needs to correct the saved AI-generated record."
+    )
+
+
+    if not st.session_state.edit_mode:
+
+        if st.button(
+            "✏️ Edit Saved Record",
+            use_container_width=True,
+        ):
+
+            st.session_state.edit_mode = True
+
+            st.rerun()
+
+
+    else:
+
+        current_data = (
+            st.session_state.clinical_data
+            or {}
+        )
+
+        current_vitals = (
+            current_data.get(
+                "vitals"
+            )
+            or {}
+        )
+
+
+        with st.form(
+            "doctor_correction_form"
+        ):
+
+            st.markdown(
+                "### Patient & Clinical Information"
+            )
+
+
+            edit_patient_name = (
+                st.text_input(
+                    "Patient Name",
+                    value=(
+                        st.session_state.patient_name
+                        or ""
+                    ),
+                )
+            )
+
+
+            edit_chief_complaint = (
+                st.text_area(
+                    "Chief Complaint",
+                    value=(
+                        current_data.get(
+                            "chief_complaint"
+                        )
+                        or ""
+                    ),
+                    height=90,
+                )
+            )
+
+
+            edit_diagnosis = (
+                st.text_area(
+                    "Diagnosis",
+                    value=(
+                        current_data.get(
+                            "diagnosis"
+                        )
+                        or ""
+                    ),
+                    height=90,
+                )
+            )
+
+
+            st.markdown(
+                "### Vitals"
+            )
+
+            vital_1, vital_2 = (
+                st.columns(2)
+            )
+
+            vital_3, vital_4 = (
+                st.columns(2)
+            )
+
+
+            with vital_1:
+
+                edit_bp = (
+                    st.text_input(
+                        "Blood Pressure",
+                        value=(
+                            current_vitals.get(
+                                "blood_pressure"
+                            )
+                            or ""
+                        ),
+                    )
+                )
+
+
+            with vital_2:
+
+                edit_hr = (
+                    st.text_input(
+                        "Heart Rate",
+                        value=(
+                            current_vitals.get(
+                                "heart_rate"
+                            )
+                            or ""
+                        ),
+                    )
+                )
+
+
+            with vital_3:
+
+                edit_temp = (
+                    st.text_input(
+                        "Temperature",
+                        value=(
+                            current_vitals.get(
+                                "temperature"
+                            )
+                            or ""
+                        ),
+                    )
+                )
+
+
+            with vital_4:
+
+                edit_spo2 = (
+                    st.text_input(
+                        "SpO₂",
+                        value=(
+                            current_vitals.get(
+                                "oxygen_saturation"
+                            )
+                            or ""
+                        ),
+                    )
+                )
+
+
+            st.markdown(
+                "### Symptoms"
+            )
+
+            edit_symptoms = (
+                st.text_area(
+                    "One symptom per line",
+                    value=list_to_lines(
+                        current_data.get(
+                            "symptoms",
+                            [],
+                        )
+                    ),
+                    height=120,
+                )
+            )
+
+
+            st.markdown(
+                "### Medications"
+            )
+
+            st.caption(
+                "One medicine per line using: "
+                "Name | Dosage | Frequency | Duration | Route"
+            )
+
+            edit_medications = (
+                st.text_area(
+                    "Medication List",
+                    value=medications_to_lines(
+                        current_data.get(
+                            "medications",
+                            [],
+                        )
+                    ),
+                    height=180,
+                    placeholder=(
+                        "Paracetamol | 500 mg | "
+                        "Twice daily | 5 days | Oral"
+                    ),
+                )
+            )
+
+
+            st.markdown(
+                "### Recommended Tests"
+            )
+
+            edit_tests = (
+                st.text_area(
+                    "One test per line",
+                    value=list_to_lines(
+                        current_data.get(
+                            "recommended_tests",
+                            [],
+                        )
+                    ),
+                    height=100,
+                )
+            )
+
+
+            st.markdown(
+                "### Doctor Instructions"
+            )
+
+            edit_instructions = (
+                st.text_area(
+                    "One instruction per line",
+                    value=list_to_lines(
+                        current_data.get(
+                            "doctor_instructions",
+                            [],
+                        )
+                    ),
+                    height=120,
+                )
+            )
+
+
+            edit_follow_up = (
+                st.text_area(
+                    "Follow Up",
+                    value=(
+                        current_data.get(
+                            "follow_up"
+                        )
+                        or ""
+                    ),
+                    height=90,
+                )
+            )
+
+
+            st.markdown(
+                "### Transcript"
+            )
+
+            edit_transcript = (
+                st.text_area(
+                    "Correct Transcript",
+                    value=(
+                        st.session_state.transcript
+                        or ""
+                    ),
+                    height=250,
+                )
+            )
+
+
+            save_col, cancel_col = (
+                st.columns(2)
+            )
+
+
+            with save_col:
+
+                save_correction = (
+                    st.form_submit_button(
+                        "💾 Save Correction",
+                        type="primary",
+                        use_container_width=True,
+                    )
+                )
+
+
+            with cancel_col:
+
+                cancel_correction = (
+                    st.form_submit_button(
+                        "Cancel",
+                        use_container_width=True,
+                    )
+                )
+
+
+        if cancel_correction:
+
+            st.session_state.edit_mode = False
+
+            st.rerun()
+
+
+        if save_correction:
+
+            payload = {
+
+                "patient_name": (
+                    edit_patient_name.strip()
+                    or None
+                ),
+
+                "transcript": (
+                    edit_transcript.strip()
+                    or None
+                ),
+
+                "chief_complaint": (
+                    edit_chief_complaint.strip()
+                    or None
+                ),
+
+                "diagnosis": (
+                    edit_diagnosis.strip()
+                    or None
+                ),
+
+                "symptoms": (
+                    lines_to_list(
+                        edit_symptoms
+                    )
+                ),
+
+                "medications": (
+                    lines_to_medications(
+                        edit_medications
+                    )
+                ),
+
+                "recommended_tests": (
+                    lines_to_list(
+                        edit_tests
+                    )
+                ),
+
+                "doctor_instructions": (
+                    lines_to_list(
+                        edit_instructions
+                    )
+                ),
+
+                "follow_up": (
+                    edit_follow_up.strip()
+                    or None
+                ),
+
+                "vitals": {
+
+                    "blood_pressure": (
+                        edit_bp.strip()
+                        or None
+                    ),
+
+                    "heart_rate": (
+                        edit_hr.strip()
+                        or None
+                    ),
+
+                    "temperature": (
+                        edit_temp.strip()
+                        or None
+                    ),
+
+                    "oxygen_saturation": (
+                        edit_spo2.strip()
+                        or None
+                    ),
+                },
+            }
+
+
+            try:
+
+                with st.spinner(
+                    "Saving doctor correction..."
+                ):
+
+                    response = requests.put(
+
+                        (
+                            f"{FASTAPI_URL}/records/"
+                            f"{st.session_state.record_id}"
+                        ),
+
+                        json=payload,
+
+                        headers=api_headers(),
+
+                        timeout=30,
+                    )
+
+
+                if (
+                    response.status_code
+                    == 200
+                ):
+
+                    result = (
+                        response.json()
+                    )
+
+                    updated_record = (
+                        result.get(
+                            "record"
+                        )
+                    )
+
+                    if updated_record:
+
+                        load_record(
+                            updated_record
+                        )
+
+                    st.session_state.edit_mode = False
+
+                    st.success(
+                        "Doctor correction saved successfully."
+                    )
+
+                    st.rerun()
+
+
+                else:
+
+                    show_api_error(
+                        response
+                    )
+
+
+            except requests.exceptions.ConnectionError:
+
+                st.error(
+                    "Cannot connect to FastAPI backend."
+                )
+
+
+            except requests.exceptions.Timeout:
+
+                st.error(
+                    "Correction request timed out."
+                )
+
+
+            except Exception as error:
+
+                st.error(
+                    "Unable to save doctor correction."
+                )
+
+                print(
+                    "Doctor correction frontend error:",
+                    type(error).__name__,
+                )
 
 
 # ============================================================
 # HISTORY
 # ============================================================
 
-st.write("")
+st.divider()
+
+st.markdown(
+    "## Consultation History"
+)
 
 
-with st.container(
-    border=True
-):
+history_col1, history_col2 = st.columns(
+    [3, 1]
+)
 
-    st.subheader(
-        "📚 Patient Consultation History"
+
+with history_col1:
+
+    search_query = st.text_input(
+        "Search by Patient ID",
+        placeholder="Example: PAT-1234ABCD",
     )
 
 
-    search_col, refresh_col = (
-        st.columns(
-            [5, 1]
-        )
+with history_col2:
+
+    st.write("")
+
+    st.write("")
+
+    refresh_history = st.button(
+        "🔄 Refresh",
+        use_container_width=True,
     )
 
 
-    with search_col:
-
-        search_term = (
-            st.text_input(
-
-                "Search records",
-
-                placeholder=(
-                    "Search by patient name, patient ID, "
-                    "complaint or diagnosis..."
-                ),
-
-                label_visibility="collapsed",
-            )
-        )
-
-
-    with refresh_col:
-
-        if st.button(
-            "🔄 Refresh",
-            use_container_width=True,
-        ):
-
-            st.rerun()
-
+if backend_online and MEDICAL_SCRIBE_API_KEY:
 
     try:
 
         params = {}
 
+        if search_query.strip():
 
-        if search_term.strip():
-
-            params[
-                "q"
-            ] = (
-                search_term.strip()
+            params["q"] = (
+                search_query.strip()
             )
 
 
-        history_response = (
-            requests.get(
+        history_response = requests.get(
 
-                (
-                    f"{FASTAPI_URL}"
-                    "/records"
-                ),
+            f"{FASTAPI_URL}/records",
 
-                params=params,
+            params=params,
 
-                timeout=20,
-            )
+            headers=api_headers(),
+
+            timeout=20,
         )
 
 
-        # ====================================================
-        # HISTORY SUCCESS
-        # ====================================================
-
-        if (
-            history_response.status_code
-            == 200
-        ):
+        if history_response.status_code == 200:
 
             records = (
-                history_response
-                .json()
-                .get(
-                    "records",
-                    [],
-                )
-            )
-
-
-            st.caption(
-                f"Records found: {len(records)}"
+                history_response.json()
             )
 
 
             if not records:
 
                 st.info(
-                    "No matching consultation records."
+                    "No consultation records found."
                 )
 
 
-            # =================================================
-            # RECORD LOOP
-            # =================================================
+            else:
 
-            for record in records:
+                st.caption(
+                    f"{len(records)} consultation(s) found"
+                )
 
-                patient_name = (
-                    record.get(
-                        "patient_name"
+
+                for record in records:
+
+                    patient_name = (
+                        record.get(
+                            "patient_name"
+                        )
+                        or "Not in audio"
                     )
-                    or "Not in audio"
-                )
 
-
-                patient_id = (
-                    record.get(
-                        "patient_id"
+                    patient_id = (
+                        record.get(
+                            "patient_id"
+                        )
+                        or "N/A"
                     )
-                    or "No ID"
-                )
+
+                    date = (
+                        record.get(
+                            "date"
+                        )
+                        or ""
+                    )
+
+                    time = (
+                        record.get(
+                            "time"
+                        )
+                        or ""
+                    )
 
 
-                title = (
-                    f"{patient_name}"
-                    f" • {patient_id}"
-                    f" • Record #{record['id']}"
-                    f" • {record['consultation_date']}"
-                )
+                    title = (
+                        f"{patient_name} • "
+                        f"{patient_id} • "
+                        f"{date} {time}"
+                    )
 
 
-                with st.expander(
-                    title
-                ):
-
-
-                    # =========================================
-                    # OPEN CONSULTATION
-                    # =========================================
-
-                    if st.button(
-
-                        "📂 Open Consultation",
-
-                        key=(
-                            "open_record_"
-                            f"{record['id']}"
-                        ),
-
-                        use_container_width=True,
+                    with st.expander(
+                        title
                     ):
 
-                        try:
+                        diagnosis = (
+                            record.get(
+                                "diagnosis"
+                            )
+                        )
 
-                            detail_response = (
-                                requests.get(
+                        chief_complaint = (
+                            record.get(
+                                "chief_complaint"
+                            )
+                        )
+
+
+                        st.write(
+                            "**Chief Complaint:**",
+                            chief_complaint
+                            or "Not available",
+                        )
+
+                        st.write(
+                            "**Diagnosis:**",
+                            diagnosis
+                            or "Not stated",
+                        )
+
+
+                        history_action_col1, history_action_col2 = (
+                            st.columns(2)
+                        )
+
+
+                        with history_action_col1:
+
+                            open_button = st.button(
+                                "Open Consultation",
+                                key=(
+                                    f"open_record_"
+                                    f"{record.get('id')}"
+                                ),
+                                use_container_width=True,
+                            )
+
+
+                        with history_action_col2:
+
+                            delete_button = False
+
+                            if (
+                                st.session_state.get(
+                                    "user_role"
+                                )
+                                == "doctor"
+                            ):
+
+                                delete_button = st.button(
+                                    " Delete",
+                                    key=(
+                                        f"delete_record_"
+                                        f"{record.get('id')}"
+                                    ),
+                                    type="secondary",
+                                    use_container_width=True,
+                                )
+
+
+                        if delete_button:
+
+                            try:
+
+                                delete_response = requests.delete(
 
                                     (
-                                        f"{FASTAPI_URL}"
-                                        f"/records/"
-                                        f"{record['id']}"
+                                        f"{FASTAPI_URL}/records/"
+                                        f"{record.get('id')}"
                                     ),
+
+                                    headers=api_headers(),
+
+                                    timeout=30,
+                                )
+
+
+                                if delete_response.status_code == 200:
+
+                                    deleted_id = record.get(
+                                        "id"
+                                    )
+
+                                    if (
+                                        st.session_state.get(
+                                            "record_id"
+                                        )
+                                        == deleted_id
+                                    ):
+
+                                        reset_consultation()
+
+
+                                    st.success(
+                                        "Consultation and saved audio deleted."
+                                    )
+
+                                    st.rerun()
+
+
+                                else:
+
+                                    show_api_error(
+                                        delete_response
+                                    )
+
+
+                            except requests.exceptions.ConnectionError:
+
+                                st.error(
+                                    "Cannot connect to backend."
+                                )
+
+
+                            except requests.exceptions.Timeout:
+
+                                st.error(
+                                    "Delete request timed out."
+                                )
+
+
+                            except Exception as error:
+
+                                st.error(
+                                    "Unable to delete consultation."
+                                )
+
+                                print(
+                                    "Delete frontend error:",
+                                    type(error).__name__,
+                                )
+
+
+                        if open_button:
+
+                            record_response = (
+                                requests.get(
+
+                                    f"{FASTAPI_URL}/records/"
+                                    f"{record.get('id')}",
+
+                                    headers=api_headers(),
 
                                     timeout=20,
                                 )
@@ -1832,340 +2534,79 @@ with st.container(
 
 
                             if (
-                                detail_response.status_code
+                                record_response.status_code
                                 == 200
                             ):
 
-                                selected = (
-                                    detail_response
-                                    .json()
-                                    .get(
-                                        "record",
-                                        {},
-                                    )
-                                )
-
-
                                 load_record(
-                                    selected
+                                    record_response.json()
                                 )
-
 
                                 st.rerun()
 
-
                             else:
 
-                                print(
-                                    "Consultation detail "
-                                    "request failed:",
-
-                                    detail_response.status_code,
-
-                                    detail_response.text,
+                                show_api_error(
+                                    record_response
                                 )
 
-
-                                st.error(
-                                    "Please try again "
-                                    "after some time."
-                                )
-
-
-                        except Exception as error:
-
-                            print(
-                                "Consultation detail "
-                                "loading error:",
-
-                                repr(
-                                    error
-                                ),
-                            )
-
-
-                            st.error(
-                                "Please try again "
-                                "after some time."
-                            )
-
-
-                    st.divider()
-
-
-                    # =========================================
-                    # BASIC INFORMATION
-                    # =========================================
-
-                    c1, c2, c3 = (
-                        st.columns(
-                            3
-                        )
-                    )
-
-
-                    with c1:
-
-                        st.write(
-                            "**Patient Name**"
-                        )
-
-
-                        st.write(
-                            patient_name
-                        )
-
-
-                    with c2:
-
-                        st.write(
-                            "**Patient ID**"
-                        )
-
-
-                        st.write(
-                            patient_id
-                        )
-
-
-                    with c3:
-
-                        st.write(
-                            "**Consultation**"
-                        )
-
-
-                        st.write(
-                            (
-                                f"{record['consultation_date']} "
-                                f"{record['consultation_time']}"
-                            )
-                        )
-
-
-                    # =========================================
-                    # DIAGNOSIS
-                    # =========================================
-
-                    st.write(
-                        "**Diagnosis**"
-                    )
-
-
-                    st.write(
-                        record.get(
-                            "diagnosis"
-                        )
-                        or "Not mentioned"
-                    )
-
-
-                    # =========================================
-                    # CHIEF COMPLAINT
-                    # =========================================
-
-                    st.write(
-                        "**Chief Complaint**"
-                    )
-
-
-                    st.write(
-                        record.get(
-                            "chief_complaint"
-                        )
-                        or "Not mentioned"
-                    )
-
-
-                    # =========================================
-                    # SYMPTOMS
-                    # =========================================
-
-                    st.write(
-                        "**Symptoms**"
-                    )
-
-
-                    history_symptoms = (
-                        record.get(
-                            "symptoms",
-                            [],
-                        )
-                    )
-
-
-                    if history_symptoms:
-
-                        for symptom in history_symptoms:
-
-                            st.write(
-                                f"• {symptom}"
-                            )
-
-
-                    else:
-
-                        st.write(
-                            "Not mentioned"
-                        )
-
-
-                    # =========================================
-                    # MEDICINES
-                    # =========================================
-
-                    st.write(
-                        "**Medicines**"
-                    )
-
-
-                    history_medicines = (
-                        record.get(
-                            "medications",
-                            [],
-                        )
-                    )
-
-
-                    if history_medicines:
-
-                        for medicine in history_medicines:
-
-                            medicine_text = (
-                                f"• "
-                                f"{medicine.get('name')}"
-                            )
-
-
-                            if medicine.get(
-                                "dosage"
-                            ):
-
-                                medicine_text += (
-                                    " — "
-                                    f"{medicine.get('dosage')}"
-                                )
-
-
-                            if medicine.get(
-                                "frequency"
-                            ):
-
-                                medicine_text += (
-                                    " — "
-                                    f"{medicine.get('frequency')}"
-                                )
-
-
-                            if medicine.get(
-                                "duration"
-                            ):
-
-                                medicine_text += (
-                                    " — "
-                                    f"{medicine.get('duration')}"
-                                )
-
-
-                            st.write(
-                                medicine_text
-                            )
-
-
-                    else:
-
-                        st.write(
-                            "No medicines"
-                        )
-
-
-                    # =========================================
-                    # TRANSCRIPT
-                    # =========================================
-
-                    st.write(
-                        "**Transcript**"
-                    )
-
-
-                    st.text_area(
-
-                        "Previous transcript",
-
-                        value=(
-                            record.get(
-                                "transcript",
-                                "",
-                            )
-                        ),
-
-                        height=180,
-
-                        key=(
-                            "history_transcript_"
-                            f"{record['id']}"
-                        ),
-
-                        label_visibility="collapsed",
-                    )
-
-
-        # ====================================================
-        # HISTORY ERROR
-        # ====================================================
 
         else:
 
-            print(
-                "History request failed:",
-                history_response.status_code,
-                history_response.text,
+            show_api_error(
+                history_response
             )
 
 
-            st.warning(
-                "Please try again after some time."
-            )
+    except requests.exceptions.ConnectionError:
+
+        st.warning(
+            "Consultation history is unavailable "
+            "because the backend is offline."
+        )
 
 
     except Exception as error:
 
-        print(
-            "History loading error:",
-            repr(
-                error
-            ),
-        )
-
-
         st.warning(
-            "Please try again after some time."
+            "Unable to load consultation history."
         )
+
+        print(
+            "History error:",
+            type(error).__name__,
+        )
+
+
+elif not backend_online:
+
+    st.warning(
+        "Start the FastAPI backend to access consultation history."
+    )
+
+
+elif not MEDICAL_SCRIBE_API_KEY:
+
+    st.error(
+        "MEDICAL_SCRIBE_API_KEY is missing from .env"
+    )
 
 
 # ============================================================
 # DISCLAIMER
 # ============================================================
 
-st.write("")
-
-
-st.warning(
-    "⚠️ AI-generated clinical information "
-    "must be reviewed and verified by an "
-    "authorized healthcare professional "
-    "before clinical use."
-)
-
-
 st.divider()
+
+st.caption(
+    "Medical Scribe AI is an AI-assisted documentation tool. "
+    "Clinical information generated by the system must be "
+    "reviewed and verified by an authorized healthcare "
+    "professional before clinical use."
+)
 
 
 st.caption(
-    "Medical Scribe AI"
-    " • FastAPI"
-    " • Streamlit"
-    " • Groq"
-    " • SQLite"
-    " • Langfuse"
+    "FastAPI • Streamlit • Groq • SQLite • Langfuse"
 )
+

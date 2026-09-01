@@ -82,7 +82,6 @@ def pcm_to_wav(
 
     output = io.BytesIO()
 
-
     with wave.open(
         output,
         "wb",
@@ -104,8 +103,13 @@ def pcm_to_wav(
             pcm_bytes
         )
 
+    wav_bytes = (
+        output.getvalue()
+    )
 
-    return output.getvalue()
+    output.close()
+
+    return wav_bytes
 
 
 # ============================================================
@@ -332,6 +336,16 @@ class HandsFreeState:
             )
 
 
+            self.last_wake_check = (
+                0.0
+            )
+
+
+            self.wake_check_running = (
+                False
+            )
+
+
     # ========================================================
     # SNAPSHOT
     # ========================================================
@@ -378,7 +392,26 @@ class HandsFreeState:
             )
 
 
+            # Remove completed audio reference
+            # immediately after processing handoff.
             self.completed_wav = (
+                None
+            )
+
+
+            # Clear temporary microphone buffers.
+            self.wake_buffer.clear()
+
+
+            self.recording_buffer.clear()
+
+
+            self.recording_started_at = (
+                None
+            )
+
+
+            self.last_speech_at = (
                 None
             )
 
@@ -548,6 +581,11 @@ def detect_wake_phrase(
 
 
     finally:
+
+        pcm_snapshot = None
+
+        wav_bytes = None
+
 
         with state.lock:
 
@@ -763,16 +801,20 @@ def build_audio_callback(
                         )
 
 
+                        recording_pcm = bytes(
+                            state.recording_buffer
+                        )
+
+
                         state.completed_wav = (
                             pcm_to_wav(
-
-                                bytes(
-                                    state.recording_buffer
-                                ),
-
+                                recording_pcm,
                                 sample_rate,
                             )
                         )
+
+
+                        recording_pcm = None
 
 
                         state.completed_id += (
@@ -781,6 +823,19 @@ def build_audio_callback(
 
 
                         state.recording_buffer.clear()
+
+
+                        state.wake_buffer.clear()
+
+
+                        state.recording_started_at = (
+                            None
+                        )
+
+
+                        state.last_speech_at = (
+                            None
+                        )
 
 
             # ================================================
@@ -814,6 +869,9 @@ def build_audio_callback(
                 thread.start()
 
 
+                pcm_snapshot = None
+
+
         except Exception as error:
 
             print(
@@ -822,6 +880,11 @@ def build_audio_callback(
                     error
                 ),
             )
+
+
+        finally:
+
+            pcm_bytes = None
 
 
         return frame
@@ -976,6 +1039,9 @@ def render_handsfree_recorder():
                         'Listening for '
                         '"start recording"...'
                     )
+
+
+                audio_bytes = None
 
 
                 st.rerun()
