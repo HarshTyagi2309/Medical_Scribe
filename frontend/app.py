@@ -1,5 +1,6 @@
-import os
+﻿import os
 from datetime import datetime, timezone
+from html import escape
 from io import BytesIO
 from textwrap import dedent
 
@@ -88,10 +89,10 @@ def api_headers():
 # ============================================================
 
 st.set_page_config(
-    page_title="Medical Scribe AI",
+    page_title="MediNote",
     page_icon="🩺",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 
@@ -132,6 +133,8 @@ SESSION_DEFAULTS = {
     "edit_mode": False,
 
     "last_activity_time": None,
+
+    "workspace_view": "consultation",
 }
 
 
@@ -193,11 +196,8 @@ def check_inactivity_timeout():
 
     if elapsed_seconds >= timeout_seconds:
 
-        for key in list(
-            st.session_state.keys()
-        ):
-
-            del st.session_state[key]
+        clear_auth_session()
+        st.session_state["last_activity_time"] = None
 
         st.warning(
             "Session ended due to inactivity. "
@@ -507,159 +507,6 @@ def show_api_error(response):
 
 
 # ============================================================
-# AUDIT HISTORY VIEW
-# ============================================================
-
-def show_audit_history(record_id):
-
-    try:
-
-        response = requests.get(
-            f"{FASTAPI_URL}/records/{record_id}/audit-history",
-            headers=api_headers(),
-            timeout=10,
-        )
-
-        if response.status_code != 200:
-
-            show_api_error(response)
-            return
-
-        data = response.json()
-
-        history = data.get(
-            "history",
-            [],
-        )
-
-        if not history:
-
-            st.info(
-                "No edit or delete history found."
-            )
-            return
-
-        st.markdown(
-            f"### Audit History ? Record #{record_id}"
-        )
-
-        for item in history:
-
-            action = item.get(
-                "action",
-                "UNKNOWN",
-            )
-
-            username = item.get(
-                "username",
-                "Unknown",
-            )
-
-            timestamp = item.get(
-                "timestamp",
-                "",
-            )
-
-            changed_fields = item.get(
-                "changed_fields",
-                [],
-            )
-
-            old_values = item.get(
-                "old_values",
-            ) or {}
-
-            new_values = item.get(
-                "new_values",
-            ) or {}
-
-            with st.expander(
-                f"{action} | {timestamp} | {username}"
-            ):
-
-                st.write(
-                    f"**Doctor/User:** {username}"
-                )
-
-                st.write(
-                    f"**Action:** {action}"
-                )
-
-                st.write(
-                    f"**Time:** {timestamp}"
-                )
-
-                if action == "EDIT":
-
-                    if not changed_fields:
-
-                        st.write(
-                            "No changed fields recorded."
-                        )
-
-                    for field in changed_fields:
-
-                        st.markdown(
-                            f"**{field}**"
-                        )
-
-                        col1, col2 = st.columns(
-                            2
-                        )
-
-                        with col1:
-
-                            st.caption(
-                                "Old Value"
-                            )
-
-                            st.write(
-                                old_values.get(
-                                    field
-                                )
-                            )
-
-                        with col2:
-
-                            st.caption(
-                                "New Value"
-                            )
-
-                            st.write(
-                                new_values.get(
-                                    field
-                                )
-                            )
-
-                if item.get(
-                    "details"
-                ):
-
-                    st.caption(
-                        item.get(
-                            "details"
-                        )
-                    )
-
-    except requests.exceptions.Timeout:
-
-        st.error(
-            "Audit history request timed out."
-        )
-
-    except Exception as error:
-
-        st.error(
-            "Unable to load audit history."
-        )
-
-        print(
-            "Audit history frontend error:",
-            type(error).__name__,
-        )
-
-
-# ============================================================
 # STYLING
 # ============================================================
 
@@ -814,62 +661,156 @@ div.stButton > button[kind="primary"]:disabled {
 )
 
 
-# Responsive visual system. Colors follow the device light/dark preference.
+# Production clinical workspace theme.
 st.markdown(
     dedent("""
     <style>
     :root {
-        --ms-bg:#f4f7fb; --ms-surface:rgba(255,255,255,.94);
-        --ms-text:#10233f; --ms-muted:#60708a; --ms-border:#dce5ef;
-        --ms-brand:#087f8c; --ms-brand-strong:#066975;
-        --ms-shadow:0 16px 38px rgba(25,55,90,.09);
+        --mn-bg:#f3f6f9; --mn-surface:#ffffff; --mn-soft:#f8fafb;
+        --mn-ink:#142536; --mn-muted:#687b8e; --mn-border:#dfe7ec;
+        --mn-teal:#13877f; --mn-teal-dark:#0c6e68; --mn-teal-soft:#e8f6f4;
+        --mn-danger:#c94d58; --mn-shadow:0 8px 24px rgba(25,49,72,.055);
     }
-    @media (prefers-color-scheme:dark) {
-        :root {
-            --ms-bg:#09131f; --ms-surface:rgba(18,32,48,.95);
-            --ms-text:#edf6ff; --ms-muted:#a8b8ca; --ms-border:#294057;
-            --ms-brand:#2bc4c9; --ms-brand-strong:#159ba2;
-            --ms-shadow:0 18px 44px rgba(0,0,0,.28);
-        }
+    .stApp { color:var(--mn-ink); background:var(--mn-bg); }
+    .block-container { max-width:1400px; padding:1.65rem 2.25rem 2.5rem; }
+    header[data-testid="stHeader"] { background:rgba(243,246,249,.88); backdrop-filter:blur(12px); }
+    #MainMenu, footer { visibility:hidden; }
+
+    section[data-testid="stSidebar"] {
+        width:292px!important; background:#0b1f33;
+        border-right:1px solid rgba(255,255,255,.08);
     }
-    .stApp {
-        color:var(--ms-text);
-        background:radial-gradient(circle at 8% 0%,rgba(19,165,174,.13),transparent 28rem),
-                   radial-gradient(circle at 92% 8%,rgba(72,118,255,.10),transparent 24rem),
-                   var(--ms-bg);
+    section[data-testid="stSidebar"] > div:first-child { padding:1.15rem .85rem 1rem; }
+    section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+        background:linear-gradient(145deg,rgba(18,166,153,.12),transparent 38%),#0b1f33;
     }
-    .block-container { max-width:1380px; padding:1.4rem 2rem 3rem; }
-    .main-header,.hero-card {
-        background:var(--ms-surface); border:1px solid var(--ms-border);
-        box-shadow:var(--ms-shadow); backdrop-filter:blur(12px);
-    }
-    .main-header { border-radius:22px; padding:22px 26px; margin-bottom:18px; }
-    .main-header h2,.hero-card h3,.section-title,.result-value { color:var(--ms-text)!important; }
-    .main-header p,.hero-card p,.small-muted,.result-label { color:var(--ms-muted)!important; }
-    .hero-card { position:relative; overflow:hidden; border-radius:22px; padding:26px; margin-bottom:22px; }
-    .hero-card::after { content:""; position:absolute; width:180px; height:180px; right:-65px; top:-90px; border-radius:50%; background:rgba(20,184,166,.12); }
-    .small-muted { color:var(--ms-brand)!important; font-weight:700; }
-    .status-online,.status-offline { display:inline-flex; align-items:center; padding:8px 13px; border-radius:999px; font-weight:700; font-size:12px; }
-    .status-online { background:rgba(34,197,94,.13); color:#16803b; border:1px solid rgba(34,197,94,.22); }
-    .status-offline { background:rgba(239,68,68,.12); color:#c42b2b; border:1px solid rgba(239,68,68,.22); }
-    .section-title { font-size:1.15rem; margin-bottom:10px; }
-    div[data-testid="stMetric"] { min-height:96px; background:var(--ms-surface); border:1px solid var(--ms-border); padding:15px; border-radius:16px; box-shadow:0 7px 22px rgba(15,23,42,.05); }
-    div[data-testid="stMetricLabel"] { color:var(--ms-muted); }
-    div[data-testid="stMetricValue"] { color:var(--ms-text); font-size:1.18rem; }
-    div[data-testid="stTabs"] [data-baseweb="tab-list"] { gap:8px; overflow-x:auto; }
-    div[data-testid="stTabs"] button { border-radius:12px 12px 0 0; white-space:nowrap; }
-    div[data-testid="stExpander"],div[data-testid="stFileUploaderDropzone"],textarea { border-color:var(--ms-border)!important; border-radius:14px!important; }
-    .stButton>button { min-height:2.75rem; border-radius:12px; font-weight:700; }
-    .stButton>button[kind="primary"] { border:0; background:linear-gradient(135deg,var(--ms-brand),var(--ms-brand-strong)); }
-    hr { border-color:var(--ms-border)!important; }
+    .mn-brand { display:flex; align-items:center; gap:12px; padding:6px 8px 18px;
+        border-bottom:1px solid rgba(255,255,255,.09); margin-bottom:18px; }
+    .mn-logo { display:grid; place-items:center; width:42px; height:42px; flex:0 0 42px;
+        border-radius:10px; background:#19a79b; color:#fff; font-size:24px; font-weight:700;
+        box-shadow:0 8px 20px rgba(25,167,155,.22); }
+    .mn-brand-name { color:#fff; font-size:1.18rem; line-height:1.2; font-weight:750; }
+    .mn-brand-tag { color:#91a6bc; font-size:.76rem; margin-top:3px; }
+    .mn-nav-label { color:#7089a1; font-size:.68rem; font-weight:700; letter-spacing:.08em;
+        padding:5px 11px 7px; }
+    .mn-profile { display:flex; align-items:center; gap:11px; padding:12px; margin:18px 3px 10px;
+        border:1px solid rgba(255,255,255,.09); border-radius:8px; background:rgba(255,255,255,.045); }
+    .mn-avatar { display:grid; place-items:center; width:36px; height:36px; flex:0 0 36px;
+        border-radius:50%; background:#e9f7f5; color:#087f75; font-size:.76rem; font-weight:800; }
+    .mn-profile-name { color:#f7fbff; font-size:.86rem; font-weight:650; line-height:1.2; }
+    .mn-profile-role { color:#8298ae; font-size:.71rem; margin-top:3px; text-transform:capitalize; }
+    .mn-health { display:flex; align-items:center; gap:8px; color:#8fa5b9; font-size:.73rem;
+        padding:4px 10px 10px; }
+    .mn-health-dot { width:7px; height:7px; border-radius:50%; background:#35c98f;
+        box-shadow:0 0 0 3px rgba(53,201,143,.12); }
+    .mn-health-dot.offline { background:#df6670; box-shadow:0 0 0 3px rgba(223,102,112,.12); }
+    section[data-testid="stSidebar"] .stButton button { width:100%; min-height:43px; justify-content:flex-start;
+        padding:.5rem .75rem; border:1px solid transparent; border-radius:8px; background:transparent;
+        color:#b9c8d7; font-size:.86rem; font-weight:550; }
+    section[data-testid="stSidebar"] .stButton button:hover { color:#fff; background:rgba(255,255,255,.065);
+        border-color:rgba(255,255,255,.05); transform:none; box-shadow:none; }
+    section[data-testid="stSidebar"] .stButton button[kind="primary"] { color:#fff; background:#147f79;
+        border-color:#27968f; box-shadow:0 5px 14px rgba(0,0,0,.16); }
+    section[data-testid="stSidebar"] div[data-testid="stButton"] { margin-bottom:2px; }
+    .mn-sidebar-link { display:flex; align-items:center; min-height:43px; padding:11px 12px; margin-bottom:2px;
+        border:1px solid transparent; border-radius:8px; color:#b9c8d7!important; font-size:.86rem;
+        font-weight:550; text-decoration:none!important; }
+    .mn-sidebar-link:hover { color:#fff!important; background:rgba(255,255,255,.065); }
+
+    .mn-page-header { display:flex; align-items:flex-start; justify-content:space-between; gap:24px;
+        padding:2px 0 20px; margin-bottom:20px; border-bottom:1px solid var(--mn-border); }
+    .mn-eyebrow { color:var(--mn-teal-dark); font-size:.7rem; font-weight:800; letter-spacing:.08em;
+        text-transform:uppercase; margin-bottom:6px; }
+    .mn-title { color:var(--mn-ink); font-size:1.72rem; line-height:1.2; font-weight:760; }
+    .mn-subtitle { max-width:690px; color:var(--mn-muted); font-size:.88rem; margin-top:5px; }
+    .mn-status { display:inline-flex; align-items:center; gap:7px; flex:0 0 auto; padding:7px 10px;
+        border:1px solid #c7ead7; border-radius:999px; color:#176b50; background:#eaf7f0;
+        font-size:.72rem; font-weight:700; }
+    .mn-status.offline { color:#a33c46; background:#fcedee; border-color:#f0cbd0; }
+    .mn-status i { width:7px; height:7px; border-radius:50%; background:#27a96f; }
+    .mn-status.offline i { background:#d85d68; }
+    .mn-record-state { display:flex; align-items:center; gap:11px; min-height:52px; padding:10px 13px;
+        margin:10px 0 12px; border:1px solid #d7e5e4; border-radius:8px; background:#f5faf9; }
+    .mn-record-dot { width:11px; height:11px; flex:0 0 11px; border-radius:50%; background:#79909f;
+        box-shadow:0 0 0 4px rgba(121,144,159,.12); }
+    .mn-record-state.recording { color:#9f2f3a; border-color:#efc8cd; background:#fff4f5; }
+    .mn-record-state.recording .mn-record-dot { background:#db4654;
+        box-shadow:0 0 0 5px rgba(219,70,84,.14); animation:mn-pulse 1.25s ease-out infinite; }
+    .mn-record-state.ready { color:#176b50; border-color:#c7ead7; background:#eef9f3; }
+    .mn-record-state.ready .mn-record-dot { background:#27a96f; box-shadow:0 0 0 4px rgba(39,169,111,.13); }
+    .mn-record-copy { min-width:0; }
+    .mn-record-label { color:inherit; font-size:.76rem; line-height:1.15; font-weight:800; text-transform:uppercase; }
+    .mn-record-detail { color:var(--mn-muted); font-size:.72rem; margin-top:3px; }
+    @keyframes mn-pulse { 0% { box-shadow:0 0 0 0 rgba(219,70,84,.38); }
+        70% { box-shadow:0 0 0 10px rgba(219,70,84,0); } 100% { box-shadow:0 0 0 0 rgba(219,70,84,0); } }
+    div[data-testid="stAudioInput"] { padding:14px; border:1px solid var(--mn-border); border-radius:8px;
+        background:var(--mn-soft); }
+    .main-header { display:none; }
+    .hero-card { display:none; }
+
+    .section-title { color:var(--mn-ink)!important; font-size:1rem; font-weight:720;
+        margin:4px 0 12px; }
+    h1,h2,h3,h4,p,label,span { letter-spacing:0; }
+    h2 { color:var(--mn-ink); font-size:1.4rem!important; }
+    h3 { color:var(--mn-ink); font-size:1.03rem!important; font-weight:720!important; }
+    h4 { color:var(--mn-ink); font-size:.94rem!important; }
+    div[data-testid="stCaptionContainer"] { color:var(--mn-muted); }
+    hr { border-color:var(--mn-border)!important; margin:1.4rem 0!important; }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] { background:var(--mn-surface); border:1px solid var(--mn-border);
+        border-radius:8px; box-shadow:var(--mn-shadow); }
+    div[data-testid="stMetric"] { min-height:100px; padding:16px 17px; border:1px solid var(--mn-border);
+        border-radius:8px; background:var(--mn-surface); box-shadow:var(--mn-shadow); }
+    div[data-testid="stMetricLabel"] { color:var(--mn-muted); font-size:.76rem; font-weight:650; }
+    div[data-testid="stMetricValue"] { color:var(--mn-ink); font-size:1.18rem; font-weight:750; }
+
+    .stButton>button, .stFormSubmitButton>button { min-height:42px; border-radius:8px; border-color:#ccd8df;
+        color:#294052; background:#fff; font-weight:650; transition:transform 120ms ease,box-shadow 120ms ease; }
+    .stButton>button:hover, .stFormSubmitButton>button:hover { color:var(--mn-teal-dark); border-color:#8dbab6;
+        box-shadow:0 5px 14px rgba(25,49,72,.08); transform:translateY(-1px); }
+    .stButton>button[kind="primary"], .stFormSubmitButton>button[kind="primary"] { color:#fff!important;
+        border-color:var(--mn-teal-dark)!important; background:var(--mn-teal)!important;
+        box-shadow:0 5px 14px rgba(19,135,127,.18); }
+    .stButton>button[kind="primary"]:hover, .stFormSubmitButton>button[kind="primary"]:hover {
+        color:#fff!important; background:var(--mn-teal-dark)!important; }
+
+    div[data-testid="stTabs"] [data-baseweb="tab-list"] { gap:4px; padding:4px; border:1px solid var(--mn-border);
+        border-radius:8px; background:#eaf0f3; overflow-x:auto; }
+    div[data-testid="stTabs"] button { min-height:38px; padding:7px 13px; border-radius:6px; white-space:nowrap; }
+    div[data-testid="stTabs"] button[aria-selected="true"] { color:var(--mn-teal-dark); background:#fff;
+        box-shadow:0 2px 7px rgba(25,49,72,.08); }
+    div[data-testid="stTabs"] [data-baseweb="tab-highlight"] { display:none; }
+    div[data-testid="stFileUploaderDropzone"] { min-height:126px; padding:1.15rem; border:1px dashed #a9c7c4;
+        border-radius:8px!important; background:#f6fbfa; }
+    .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"]>div {
+        border-radius:8px!important; border-color:#ccd8df; background:#fff; }
+    .stTextInput input { min-height:44px; }
+    div[data-testid="stExpander"] { border:1px solid var(--mn-border); border-radius:8px!important;
+        background:var(--mn-surface); box-shadow:0 4px 14px rgba(25,49,72,.035); }
+    div[data-testid="stForm"] { padding:1.35rem; border:1px solid var(--mn-border); border-radius:8px;
+        background:var(--mn-surface); box-shadow:var(--mn-shadow); }
+    div[data-testid="stAlert"] { border-radius:8px; border-width:1px; }
+    audio { width:100%; }
+
+    .mn-login { max-width:520px; margin:46px auto 22px; text-align:center; }
+    .mn-login-mark { display:grid; place-items:center; width:48px; height:48px; margin:0 auto 14px;
+        border-radius:10px; color:#fff; background:var(--mn-teal); font-size:26px; font-weight:750;
+        box-shadow:0 9px 22px rgba(19,135,127,.2); }
+    .mn-login-title { color:var(--mn-ink); font-size:1.7rem; font-weight:760; }
+    .mn-login-copy { color:var(--mn-muted); font-size:.88rem; margin-top:5px; }
+
+    .mn-footer { display:flex; flex-wrap:wrap; gap:8px 18px; padding:20px 2px 2px; margin-top:25px;
+        border-top:1px solid var(--mn-border); color:#7a8c9c; font-size:.71rem; }
+    .mn-footer span:before { content:""; display:inline-block; width:6px; height:6px; margin-right:7px;
+        border-radius:50%; background:#35ad78; vertical-align:1px; }
     @media (max-width:768px) {
-        .block-container { padding:.8rem .85rem 2rem; }
-        .main-header,.hero-card { border-radius:17px; padding:18px; }
-        .main-header p { font-size:.9rem; }
-        .hero-card::after { display:none; }
+        .block-container { padding:1rem .85rem 2rem; }
+        .mn-page-header { gap:12px; }
+        .mn-title { font-size:1.45rem; }
+        .mn-status { padding:6px 8px; }
         div[data-testid="stHorizontalBlock"] { gap:.75rem; }
         div[data-testid="column"] { min-width:0!important; }
-        div[data-testid="stMetric"] { min-height:84px; padding:12px; }
+        div[data-testid="stMetric"] { min-height:86px; padding:12px; }
     }
     </style>
     """),
@@ -877,9 +818,150 @@ st.markdown(
 )
 
 
+def render_history_view(backend_online):
+    """Render the backend-connected consultation history workspace."""
+
+    st.markdown(
+        """
+        <div class="mn-page-header">
+            <div>
+                <div class="mn-eyebrow">Patient records</div>
+                <div class="mn-title">Consultation history</div>
+                <div class="mn-subtitle">
+                    Search, review and manage saved clinical consultations.
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    search_col, refresh_col = st.columns([4, 1])
+
+    with search_col:
+        search_query = st.text_input(
+            "Search consultations",
+            placeholder="Search by patient ID or patient name",
+            label_visibility="collapsed",
+        )
+
+    with refresh_col:
+        st.button(
+            "Refresh",
+            key="history_view_refresh",
+            use_container_width=True,
+        )
+
+    if not backend_online:
+        st.warning("Start the FastAPI backend to access consultation history.")
+        return
+
+    try:
+        params = {}
+        if search_query.strip():
+            params["q"] = search_query.strip()
+
+        response = requests.get(
+            f"{FASTAPI_URL}/records",
+            params=params,
+            headers=api_headers(),
+            timeout=20,
+        )
+
+        if response.status_code != 200:
+            show_api_error(response)
+            return
+
+        records = response.json()
+        if not records:
+            st.info("No consultation records found.")
+            return
+
+        st.caption(f"{len(records)} consultation(s) found")
+
+        for record in records:
+            patient_name = record.get("patient_name") or "Not in audio"
+            patient_id = record.get("patient_id") or "N/A"
+            date = record.get("date") or ""
+            time = record.get("time") or ""
+            record_id = record.get("id")
+
+            with st.expander(
+                f"{patient_name}  |  {patient_id}  |  {date} {time}"
+            ):
+                detail_col, action_col = st.columns([3, 1])
+
+                with detail_col:
+                    st.markdown("**Chief complaint**")
+                    st.write(record.get("chief_complaint") or "Not available")
+                    st.markdown("**Diagnosis**")
+                    st.write(record.get("diagnosis") or "Not stated")
+
+                with action_col:
+                    if st.button(
+                        "Open consultation",
+                        key=f"history_view_open_{record_id}",
+                        type="primary",
+                        use_container_width=True,
+                    ):
+                        record_response = requests.get(
+                            f"{FASTAPI_URL}/records/{record_id}",
+                            headers=api_headers(),
+                            timeout=20,
+                        )
+                        if record_response.status_code == 200:
+                            load_record(record_response.json())
+                            st.session_state.workspace_view = "consultation"
+                            st.rerun()
+                        else:
+                            show_api_error(record_response)
+
+                    if st.session_state.get("user_role") == "doctor":
+                        if st.button(
+                            "Delete",
+                            key=f"history_view_delete_{record_id}",
+                            use_container_width=True,
+                        ):
+                            delete_response = requests.delete(
+                                f"{FASTAPI_URL}/records/{record_id}",
+                                headers=api_headers(),
+                                timeout=30,
+                            )
+                            if delete_response.status_code == 200:
+                                if st.session_state.get("record_id") == record_id:
+                                    reset_consultation()
+                                    st.session_state.workspace_view = "history"
+                                st.success("Consultation and saved audio deleted.")
+                                st.rerun()
+                            else:
+                                show_api_error(delete_response)
+
+    except requests.exceptions.ConnectionError:
+        st.warning("Consultation history is unavailable because the backend is offline.")
+    except requests.exceptions.Timeout:
+        st.warning("Consultation history request timed out.")
+    except Exception as error:
+        st.warning("Unable to load consultation history.")
+        print("History view error:", type(error).__name__)
+
+
 # ============================================================
 # LOGIN
 # ============================================================
+
+with st.sidebar:
+    st.markdown(
+        """
+        <div class="mn-brand">
+            <div class="mn-logo">+</div>
+            <div>
+                <div class="mn-brand-name">MediNote</div>
+                <div class="mn-brand-tag">AI Clinical Scribe</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 if not st.session_state.get(
     "authenticated"
@@ -887,15 +969,10 @@ if not st.session_state.get(
 
     st.markdown(
         """
-        <div style="
-            max-width:520px;
-            margin:50px auto 20px auto;
-            text-align:center;
-        ">
-            <h1> Medical Scribe AI</h1>
-            <p>
-                Secure clinical documentation assistant
-            </p>
+        <div class="mn-login">
+            <div class="mn-login-mark">+</div>
+            <div class="mn-login-title">Welcome to MediNote</div>
+            <div class="mn-login-copy">Secure clinical documentation workspace</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1037,39 +1114,6 @@ check_inactivity_timeout()
 
 
 # ============================================================
-# LOGOUT
-# ============================================================
-
-logout_col1, logout_col2 = st.columns(
-    [5, 1]
-)
-
-with logout_col1:
-
-    st.caption(
-        "Signed in as "
-        f"{st.session_state.get('username')} "
-        f"({st.session_state.get('user_role')})"
-    )
-
-
-with logout_col2:
-
-    if st.button(
-        "Logout",
-        use_container_width=True,
-    ):
-
-        for key in list(
-            st.session_state.keys()
-        ):
-
-            del st.session_state[key]
-
-        st.rerun()
-
-
-# ============================================================
 # HEALTH
 # ============================================================
 
@@ -1083,106 +1127,139 @@ backend_online = (
 
 
 # ============================================================
+# SIDEBAR WORKSPACE
+# ============================================================
+
+with st.sidebar:
+
+    st.markdown(
+        '<div class="mn-nav-label">WORKSPACE</div>',
+        unsafe_allow_html=True,
+    )
+
+    if st.button(
+        "＋  Consultation",
+        type=(
+            "primary"
+            if st.session_state.workspace_view == "consultation"
+            else "secondary"
+        ),
+        use_container_width=True,
+    ):
+        st.session_state.workspace_view = "consultation"
+        st.rerun()
+
+    if st.button(
+        "📋  Consultation History",
+        type=(
+            "primary"
+            if st.session_state.workspace_view == "history"
+            else "secondary"
+        ),
+        use_container_width=True,
+    ):
+        st.session_state.workspace_view = "history"
+        st.rerun()
+
+    username = (
+        st.session_state.get("username")
+        or "Authorized user"
+    )
+    user_role = (
+        st.session_state.get("user_role")
+        or "clinical account"
+    )
+    initials = "".join(
+        part[0].upper()
+        for part in username.split()[:2]
+        if part
+    ) or "AU"
+    username_display = escape(str(username))
+    role_display = escape(str(user_role))
+    health_class = "" if backend_online else " offline"
+    health_label = "Backend online" if backend_online else "Backend offline"
+
+    st.markdown(
+        f"""
+        <div class="mn-profile">
+            <div class="mn-avatar">{initials}</div>
+            <div>
+                <div class="mn-profile-name">{username_display}</div>
+                <div class="mn-profile-role">{role_display} account</div>
+            </div>
+        </div>
+        <div class="mn-health">
+            <span class="mn-health-dot{health_class}"></span>
+            {health_label}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if st.button(
+        "↪  Sign out",
+        use_container_width=True,
+    ):
+        clear_auth_session()
+        st.session_state["last_activity_time"] = None
+        st.rerun()
+
+
+if st.session_state.workspace_view == "history":
+    render_history_view(backend_online)
+    st.markdown(
+        """
+        <div class="mn-footer">
+            <span>Encrypted clinical storage</span>
+            <span>Authenticated access</span>
+            <span>Role-based records</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.stop()
+
+
+# ============================================================
 # HEADER
 # ============================================================
 
-header_left, header_right = st.columns(
-    [5, 1.5]
-)
+status_class = "" if backend_online else " offline"
+status_text = "System ready" if backend_online else "Backend unavailable"
 
+header_main, header_actions = st.columns([5, 1.35])
 
-with header_left:
-
+with header_main:
     st.markdown(
         dedent("""
-        <div class="main-header">
-            <h2 style="
-                margin:0;
-                color:#0f172a;
-            ">
-                🩺 Medical Scribe AI
-            </h2>
-            <p style="
-                margin:6px 0 0 0;
-                color:#64748b;
-            ">
-                AI-assisted clinical consultation
-                transcription and structured documentation
-            </p>
+        <div>
+            <div class="mn-eyebrow">Clinical workspace</div>
+            <div class="mn-title">New consultation</div>
+            <div class="mn-subtitle">
+                Capture a consultation, generate a transcript and review
+                structured clinical documentation before use.
+            </div>
         </div>
         """),
         unsafe_allow_html=True,
     )
 
-
-with header_right:
-
-    st.write("")
-
-    if backend_online:
-
-        st.markdown(
-            dedent("""
-            <div class="status-online">
-                ● Backend Online
-            </div>
-            """),
-            unsafe_allow_html=True,
-        )
-
-    else:
-
-        st.markdown(
-            dedent("""
-            <div class="status-offline">
-                ● Backend Offline
-            </div>
-            """),
-            unsafe_allow_html=True,
-        )
-
-    st.write("")
+with header_actions:
+    st.markdown(
+        f'<div class="mn-status{status_class}"><i></i>{status_text}</div>',
+        unsafe_allow_html=True,
+    )
 
     if st.button(
-        "+ New Consultation",
+        "＋  New Consultation",
+        key="header_new_consultation",
         use_container_width=True,
     ):
-
         reset_consultation()
-
+        st.session_state.workspace_view = "consultation"
         st.rerun()
 
-
-# ============================================================
-# HERO
-# ============================================================
-
-st.markdown(
-    dedent("""
-    <div class="hero-card">
-        <h3 style="
-            margin-top:0;
-            color:#0f172a;
-        ">
-            Clinical Consultation Assistant
-        </h3>
-        <p style="
-            color:#475569;
-            margin-bottom:12px;
-        ">
-            Record or upload a doctor-patient consultation.
-            The system transcribes the conversation,
-            extracts structured clinical information,
-            and stores the consultation using encrypted
-            local storage.
-        </p>
-        <div class="small-muted">
-            Record → Transcribe → Extract → Encrypt → Store → Observe
-        </div>
-    </div>
-    """),
-    unsafe_allow_html=True,
-)
+st.divider()
 
 
 # ============================================================
@@ -1269,7 +1346,6 @@ with left_column:
             "Choose audio file",
             type=[
                 "wav",
-                "mp3",
                 "m4a",
                 "ogg",
                 "webm",
@@ -1316,6 +1392,19 @@ with left_column:
             "manual_consultation.wav"
         )
 
+        st.markdown(
+            """
+            <div class="mn-record-state ready">
+                <span class="mn-record-dot"></span>
+                <div class="mn-record-copy">
+                    <div class="mn-record-label">Audio captured</div>
+                    <div class="mn-record-detail">Manual recording is ready to process.</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
 
     elif uploaded_audio is not None:
 
@@ -1325,6 +1414,19 @@ with left_column:
 
         selected_audio_name = (
             uploaded_audio.name
+        )
+
+        st.markdown(
+            """
+            <div class="mn-record-state ready">
+                <span class="mn-record-dot"></span>
+                <div class="mn-record-copy">
+                    <div class="mn-record-label">Audio selected</div>
+                    <div class="mn-record-detail">Uploaded audio is ready to process.</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
 
@@ -1774,7 +1876,7 @@ with right_column:
         with vital_col4:
 
             st.metric(
-                "SpOâ''",
+                "SpO2",
                 vitals.get(
                     "oxygen_saturation"
                 )
@@ -2201,7 +2303,7 @@ if (
 
                 edit_spo2 = (
                     st.text_input(
-                        "SpOâ''",
+                        "SpO2",
                         value=(
                             current_vitals.get(
                                 "oxygen_saturation"
@@ -2522,10 +2624,32 @@ if (
 # HISTORY
 # ============================================================
 
+st.markdown(
+    """
+    <div class="mn-footer">
+        <span>Encrypted clinical storage</span>
+        <span>Authenticated access</span>
+        <span>Audit-aware records</span>
+        <span>Human review required</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.caption(
+    "AI-generated clinical information must be reviewed and verified by an "
+    "authorized healthcare professional before clinical use."
+)
+
+# History has its own sidebar-selected view above.
+st.stop()
+
 st.divider()
 
 st.markdown(
-    "## Consultation History"
+    '<div id="consultation-history"></div><div class="section-title" '
+    'style="font-size:1.28rem;">Consultation History</div>',
+    unsafe_allow_html=True,
 )
 
 
@@ -2688,24 +2812,6 @@ if backend_online and MEDICAL_SCRIBE_API_KEY:
                         with history_action_col2:
 
                             delete_button = False
-
-                            audit_button = st.button(
-                                "Audit History",
-                                key=(
-                                    f"audit_record_"
-                                    f"{record.get('id')}"
-                                ),
-                                type="secondary",
-                            )
-
-                            if audit_button:
-
-                                show_audit_history(
-                                    record.get(
-                                        "id"
-                                    )
-                                )
-
 
                             if (
                                 st.session_state.get(
@@ -2876,205 +2982,19 @@ elif not MEDICAL_SCRIBE_API_KEY:
 # DISCLAIMER
 # ============================================================
 
-st.divider()
-
-st.caption(
-    "Medical Scribe AI is an AI-assisted documentation tool. "
-    "Clinical information generated by the system must be "
-    "reviewed and verified by an authorized healthcare "
-    "professional before clinical use."
-)
-
-
-st.caption(
-    "FastAPI • Streamlit • Groq • SQLite • Langfuse"
-)
-
-
-
-# ============================================================
-# GLOBAL AUDIT HISTORY
-# ============================================================
-
-st.divider()
-
 st.markdown(
-    "## Audit History"
+    """
+    <div class="mn-footer">
+        <span>Encrypted clinical storage</span>
+        <span>Authenticated access</span>
+        <span>Audit-aware records</span>
+        <span>Human review required</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 st.caption(
-    "Permanent doctor edit/delete activity, including deleted records."
+    "AI-generated clinical information must be reviewed and verified by an "
+    "authorized healthcare professional before clinical use."
 )
-
-if st.button(
-    "View Full Audit History",
-    key="global_audit_history_button",
-):
-
-    try:
-
-        response = requests.get(
-            f"{FASTAPI_URL}/audit-history",
-            headers=api_headers(),
-            timeout=10,
-        )
-
-        if response.status_code != 200:
-
-            show_api_error(
-                response
-            )
-
-        else:
-
-            data = response.json()
-
-            history = data.get(
-                "history",
-                [],
-            )
-
-            if not history:
-
-                st.info(
-                    "No audit history found."
-                )
-
-            else:
-
-                st.success(
-                    f"{len(history)} audit event(s) found."
-                )
-
-                for item in history:
-
-                    record_id = item.get(
-                        "record_id"
-                    )
-
-                    action = item.get(
-                        "action",
-                        "UNKNOWN",
-                    )
-
-                    username = item.get(
-                        "username",
-                        "Unknown",
-                    )
-
-                    timestamp = item.get(
-                        "timestamp",
-                        "",
-                    )
-
-                    with st.expander(
-                        f"Record #{record_id} | "
-                        f"{action} | "
-                        f"{timestamp}"
-                    ):
-
-                        st.write(
-                            f"**Record ID:** {record_id}"
-                        )
-
-                        st.write(
-                            f"**Doctor/User:** {username}"
-                        )
-
-                        st.write(
-                            f"**Role:** "
-                            f"{item.get('role', '')}"
-                        )
-
-                        st.write(
-                            f"**Action:** {action}"
-                        )
-
-                        st.write(
-                            f"**Time:** {timestamp}"
-                        )
-
-                        if action == "EDIT":
-
-                            changed_fields = (
-                                item.get(
-                                    "changed_fields",
-                                    [],
-                                )
-                            )
-
-                            old_values = (
-                                item.get(
-                                    "old_values",
-                                )
-                                or {}
-                            )
-
-                            new_values = (
-                                item.get(
-                                    "new_values",
-                                )
-                                or {}
-                            )
-
-                            for field in changed_fields:
-
-                                st.markdown(
-                                    f"### {field}"
-                                )
-
-                                old_col, new_col = (
-                                    st.columns(2)
-                                )
-
-                                with old_col:
-
-                                    st.caption(
-                                        "Old Value"
-                                    )
-
-                                    st.write(
-                                        old_values.get(
-                                            field
-                                        )
-                                    )
-
-                                with new_col:
-
-                                    st.caption(
-                                        "New Value"
-                                    )
-
-                                    st.write(
-                                        new_values.get(
-                                            field
-                                        )
-                                    )
-
-                        details = item.get(
-                            "details"
-                        )
-
-                        if details:
-
-                            st.caption(
-                                details
-                            )
-
-    except requests.exceptions.Timeout:
-
-        st.error(
-            "Audit history request timed out."
-        )
-
-    except Exception as error:
-
-        st.error(
-            "Unable to load global audit history."
-        )
-
-        print(
-            "Global audit history error:",
-            type(error).__name__,
-        )
-

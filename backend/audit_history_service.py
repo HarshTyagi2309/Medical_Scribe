@@ -2,8 +2,6 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy.orm import Session
-
 from backend.models import RecordAuditHistory
 from backend.security import decrypt_text, encrypt_text
 
@@ -11,65 +9,108 @@ from backend.security import decrypt_text, encrypt_text
 INDIA_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
 
-def get_current_timestamp() -> str:
-    return datetime.now(
-        INDIA_TIMEZONE
-    ).strftime("%Y-%m-%d %I:%M:%S %p")
+def get_current_timestamp():
+    return datetime.now(INDIA_TIMEZONE).strftime(
+        "%Y-%m-%d %I:%M:%S %p"
+    )
+
+
+def normalize_value(value):
+    if value is None:
+        return ""
+
+    if isinstance(value, dict):
+        return {
+            key: normalize_value(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, list):
+        return [
+            normalize_value(item)
+            for item in value
+        ]
+
+    return value
+
+
+def decrypt_json_value(value):
+    if not value:
+        return None
+
+    try:
+        decrypted = decrypt_text(value)
+        return json.loads(decrypted)
+    except Exception:
+        return None
+
+
+def parse_changed_fields(value):
+    if not value:
+        return []
+
+    if isinstance(value, list):
+        return value
+
+    try:
+        return json.loads(value)
+    except Exception:
+        return []
+
+
+def format_history_record(record):
+    return {
+        "id": record.id,
+        "record_id": record.record_id,
+        "action": record.action,
+        "username": record.username,
+        "role": record.role,
+        "timestamp": record.timestamp,
+        "changed_fields": parse_changed_fields(
+            record.changed_fields
+        ),
+        "old_values": decrypt_json_value(
+            record.old_values
+        ),
+        "new_values": decrypt_json_value(
+            record.new_values
+        ),
+        "details": record.details,
+    }
 
 
 def save_edit_history(
-    db: Session,
-    record_id: int,
-    username: str,
-    role: str,
-    old_values: dict,
-    new_values: dict,
+    db,
+    record_id,
+    username,
+    role,
+    old_values,
+    new_values,
 ):
+    old_values = normalize_value(old_values)
+    new_values = normalize_value(new_values)
+
     changed_fields = []
 
-    actual_old_values = {}
-    actual_new_values = {}
+    all_keys = set(old_values.keys()) | set(
+        new_values.keys()
+    )
 
-    def normalize_value(value):
-        if value is None or value == "":
-            return ""
-
-        if isinstance(value, list):
-            return [
-                normalize_value(item)
-                for item in value
-            ]
-
-        if isinstance(value, dict):
-            return {
-                key: normalize_value(item)
-                for key, item in value.items()
-            }
-
-        return value
-
-    for field, new_value in new_values.items():
-
-        old_value = old_values.get(field)
-
-        if normalize_value(old_value) != normalize_value(new_value):
-
-            changed_fields.append(field)
-
-            actual_old_values[field] = old_value
-            actual_new_values[field] = new_value
+    for key in sorted(all_keys):
+        if old_values.get(key) != new_values.get(key):
+            changed_fields.append(key)
 
     if not changed_fields:
         return None
 
     old_json = json.dumps(
-        actual_old_values,
+        old_values,
         ensure_ascii=False,
         default=str,
     )
 
     new_json = json.dumps(
-        actual_new_values,
+        new_values,
         ensure_ascii=False,
         default=str,
     )
@@ -81,14 +122,11 @@ def save_edit_history(
         role=role,
         timestamp=get_current_timestamp(),
         changed_fields=json.dumps(
-            changed_fields
+            changed_fields,
+            ensure_ascii=False,
         ),
-        old_values=encrypt_text(
-            old_json
-        ),
-        new_values=encrypt_text(
-            new_json
-        ),
+        old_values=encrypt_text(old_json),
+        new_values=encrypt_text(new_json),
         details="Doctor updated consultation record.",
     )
 
@@ -96,24 +134,23 @@ def save_edit_history(
     db.commit()
     db.refresh(history)
 
-    return history
+    return format_history_record(history)
 
 
 def save_delete_history(
-    db: Session,
-    record_id: int,
-    username: str,
-    role: str,
-    details: str = "Consultation record deleted.",
+    db,
+    record_id,
+    username,
+    role,
+    details="Doctor deleted consultation record.",
 ):
-
     history = RecordAuditHistory(
         record_id=record_id,
         action="DELETE",
         username=username,
         role=role,
         timestamp=get_current_timestamp(),
-        changed_fields=None,
+        changed_fields=json.dumps([]),
         old_values=None,
         new_values=None,
         details=details,
@@ -123,21 +160,17 @@ def save_delete_history(
     db.commit()
     db.refresh(history)
 
-    return history
+    return format_history_record(history)
 
 
 def get_record_history(
-    db: Session,
-    record_id: int,
+    db,
+    record_id,
 ):
-
-    histories = (
-        db.query(
-            RecordAuditHistory
-        )
+    records = (
+        db.query(RecordAuditHistory)
         .filter(
-            RecordAuditHistory.record_id
-            == record_id
+            RecordAuditHistory.record_id == record_id
         )
         .order_by(
             RecordAuditHistory.id.desc()
@@ -145,134 +178,24 @@ def get_record_history(
         .all()
     )
 
-    result = []
+    return [
+        format_history_record(record)
+        for record in records
+    ]
 
-    for history in histories:
-
-        old_values = None
-        new_values = None
-
-        if history.old_values:
-            try:
-                old_values = json.loads(
-                    decrypt_text(
-                        history.old_values
-                    )
-                )
-            except Exception:
-                old_values = None
-
-        if history.new_values:
-            try:
-                new_values = json.loads(
-                    decrypt_text(
-                        history.new_values
-                    )
-                )
-            except Exception:
-                new_values = None
-
-        try:
-            changed_fields = (
-                json.loads(
-                    history.changed_fields
-                )
-                if history.changed_fields
-                else []
-            )
-
-        except Exception:
-            changed_fields = []
-
-        result.append(
-            {
-                "id": history.id,
-                "record_id": history.record_id,
-                "action": history.action,
-                "username": history.username,
-                "role": history.role,
-                "timestamp": history.timestamp,
-                "changed_fields": changed_fields,
-                "old_values": old_values,
-                "new_values": new_values,
-                "details": history.details,
-            }
-        )
-
-    return result
 
 def get_all_record_history(
-    db: Session,
+    db,
 ):
-
-    histories = (
-        db.query(
-            RecordAuditHistory
-        )
+    records = (
+        db.query(RecordAuditHistory)
         .order_by(
             RecordAuditHistory.id.desc()
         )
         .all()
     )
 
-    result = []
-
-    for history in histories:
-
-        old_values = None
-        new_values = None
-
-        if history.old_values:
-
-            try:
-                old_values = json.loads(
-                    decrypt_text(
-                        history.old_values
-                    )
-                )
-
-            except Exception:
-                old_values = None
-
-        if history.new_values:
-
-            try:
-                new_values = json.loads(
-                    decrypt_text(
-                        history.new_values
-                    )
-                )
-
-            except Exception:
-                new_values = None
-
-        try:
-
-            changed_fields = (
-                json.loads(
-                    history.changed_fields
-                )
-                if history.changed_fields
-                else []
-            )
-
-        except Exception:
-
-            changed_fields = []
-
-        result.append(
-            {
-                "id": history.id,
-                "record_id": history.record_id,
-                "action": history.action,
-                "username": history.username,
-                "role": history.role,
-                "timestamp": history.timestamp,
-                "changed_fields": changed_fields,
-                "old_values": old_values,
-                "new_values": new_values,
-                "details": history.details,
-            }
-        )
-
-    return result
+    return [
+        format_history_record(record)
+        for record in records
+    ]

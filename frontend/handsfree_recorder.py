@@ -976,10 +976,19 @@ def render_handsfree_recorder():
             == "waiting"
         ):
 
-            st.info(
-                snapshot[
-                    "status"
-                ]
+            st.markdown(
+                """
+                <div class="mn-record-state">
+                    <span class="mn-record-dot"></span>
+                    <div class="mn-record-copy">
+                        <div class="mn-record-label">Listening</div>
+                        <div class="mn-record-detail">
+                            Say &quot;start recording&quot; to begin.
+                        </div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
 
@@ -988,10 +997,19 @@ def render_handsfree_recorder():
             == "recording"
         ):
 
-            st.warning(
-                snapshot[
-                    "status"
-                ]
+            st.markdown(
+                """
+                <div class="mn-record-state recording">
+                    <span class="mn-record-dot"></span>
+                    <div class="mn-record-copy">
+                        <div class="mn-record-label">Recording</div>
+                        <div class="mn-record-detail">
+                            Audio capture is active. Speak normally.
+                        </div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
 
@@ -1000,10 +1018,19 @@ def render_handsfree_recorder():
             == "processing"
         ):
 
-            st.info(
-                snapshot[
-                    "status"
-                ]
+            st.markdown(
+                """
+                <div class="mn-record-state ready">
+                    <span class="mn-record-dot"></span>
+                    <div class="mn-record-copy">
+                        <div class="mn-record-label">Processing audio</div>
+                        <div class="mn-record-detail">
+                            Recording complete. Preparing the consultation.
+                        </div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
 

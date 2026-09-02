@@ -161,7 +161,6 @@ MAX_AUDIO_SIZE = (
 
 ALLOWED_AUDIO_EXTENSIONS = {
     ".wav",
-    ".mp3",
     ".m4a",
     ".ogg",
     ".webm",
