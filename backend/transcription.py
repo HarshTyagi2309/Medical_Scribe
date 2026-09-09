@@ -30,20 +30,12 @@ OPENAI_API_KEY = os.getenv(
 ).strip()
 
 
-if not GROQ_API_KEY:
-    raise ValueError(
-        "GROQ_API_KEY is missing from .env"
-    )
-
-
-groq_client = Groq(
-    api_key=GROQ_API_KEY
+groq_client = (
+    Groq(api_key=GROQ_API_KEY)
+    if GROQ_API_KEY
+    else None
 )
 
-
-# OpenAI is optional.
-# It is used ONLY if both Groq transcription
-# models fail.
 
 openai_client = None
 
@@ -75,7 +67,7 @@ FORMATTER_MODEL = (
 
 
 # ============================================================
-# CURRENT GROQ PRICING
+# PRICING
 # ============================================================
 
 WHISPER_PRICE_PER_HOUR = {
@@ -411,7 +403,14 @@ def format_transcript(
     formatter_prompt = """
 You are formatting a medical consultation transcript.
 
-Convert the transcript into a clear dialogue.
+Convert the transcript into a clear Doctor-Patient dialogue.
+
+IMPORTANT LANGUAGE RULE:
+- The final output MUST always be in English.
+- If the original transcript is Hindi, Hinglish, or any other language,
+  translate it accurately into English.
+- If the transcript is already English, keep it in English.
+- Preserve the exact medical meaning.
 
 Use only these labels:
 
@@ -421,9 +420,12 @@ Patient:
 Rules:
 - Do not add medical information.
 - Do not invent missing words.
-- Do not diagnose anything.
+- Do not invent symptoms, diagnosis, medicines, tests, or instructions.
+- Do not diagnose anything yourself.
+- Translate only what was actually spoken.
+- Preserve names, medicine names, dosages, values, and measurements.
 - Preserve the meaning of the conversation.
-- Only organize the existing transcript.
+- Only organize and translate the existing transcript.
 """
 
     try:
@@ -583,7 +585,7 @@ Rules:
 
 
 # ============================================================
-# GROQ TRANSCRIPTION ATTEMPT
+# GROQ TRANSCRIPTION / TRANSLATION
 # ============================================================
 
 def transcribe_with_model(
@@ -623,22 +625,45 @@ def transcribe_with_model(
 
     try:
 
-        transcription = (
-            groq_client
-            .audio
-            .transcriptions
-            .create(
-                file=(
-                    filename,
-                    audio_bytes,
-                ),
-                model=model,
-                response_format="verbose_json",
-                timestamp_granularities=[
-                    "segment"
-                ],
+        # Primary Whisper model translates
+        # Hindi / Hinglish / other languages → English.
+        if model == PRIMARY_TRANSCRIPTION_MODEL:
+
+            transcription = (
+                groq_client
+                .audio
+                .translations
+                .create(
+                    file=(
+                        filename,
+                        audio_bytes,
+                    ),
+                    model=model,
+                    response_format="verbose_json",
+                    temperature=0.0,
+                )
             )
-        )
+
+        # Turbo fallback uses normal transcription.
+        # format_transcript() will convert it to English.
+        else:
+
+            transcription = (
+                groq_client
+                .audio
+                .transcriptions
+                .create(
+                    file=(
+                        filename,
+                        audio_bytes,
+                    ),
+                    model=model,
+                    response_format="verbose_json",
+                    timestamp_granularities=[
+                        "segment"
+                    ],
+                )
+            )
 
         raw_transcript = (
             getattr(
@@ -648,6 +673,12 @@ def transcribe_with_model(
             )
             or ""
         ).strip()
+
+        if not raw_transcript:
+
+            raise RuntimeError(
+                "Transcription returned empty text."
+            )
 
         latency_ms = round(
             (
@@ -967,6 +998,52 @@ def transcribe_audio(
             ).__name__,
         )
 
+        # ====================================================
+        # LANGFUSE FALLBACK SCORE
+        # ====================================================
+
+        try:
+
+            langfuse = get_langfuse_client()
+
+            if langfuse:
+
+                langfuse.score_current_trace(
+                    name="model_fallback_triggered",
+                    value=True,
+                    data_type="BOOLEAN",
+                    comment=(
+                        f"Primary model "
+                        f"{PRIMARY_TRANSCRIPTION_MODEL} failed. "
+                        f"Switching to "
+                        f"{FALLBACK_TRANSCRIPTION_MODEL}."
+                    ),
+                    metadata={
+                        "failed_model":
+                            PRIMARY_TRANSCRIPTION_MODEL,
+
+                        "fallback_model":
+                            FALLBACK_TRANSCRIPTION_MODEL,
+
+                        "provider":
+                            "groq",
+
+                        "error_type":
+                            type(
+                                primary_error
+                            ).__name__,
+                    },
+                )
+
+        except Exception as langfuse_error:
+
+            print(
+                "Langfuse fallback score failed:",
+                type(
+                    langfuse_error
+                ).__name__,
+            )
+
         print(
             "Switching to Groq fallback:",
             FALLBACK_TRANSCRIPTION_MODEL,
@@ -999,7 +1076,8 @@ def transcribe_audio(
             )
 
             print(
-                "Switching to emergency OpenAI provider fallback."
+                "Switching to emergency "
+                "OpenAI provider fallback."
             )
 
             try:
@@ -1024,6 +1102,10 @@ def transcribe_audio(
                 raise RuntimeError(
                     "All transcription providers failed."
                 ) from openai_error
+
+    # ========================================================
+    # FINAL ENGLISH DOCTOR-PATIENT TRANSCRIPT
+    # ========================================================
 
     formatted_transcript = (
         format_transcript(

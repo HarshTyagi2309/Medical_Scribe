@@ -503,3 +503,4 @@ def decrypt_bytes(
     return fernet.decrypt(
         value
     )
+

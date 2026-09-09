@@ -1,18 +1,18 @@
+
+# ============================================================
+# TIME HELPERS
+# ============================================================
 from backend.backup_service import (
     create_backup,
     verify_backup,
     list_backups,
     restore_backup,
 )
-import hashlib
-import json
-import os
 import uuid
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from dotenv import load_dotenv
 from fastapi import (
     Depends,
     FastAPI,
@@ -23,8 +23,15 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from backend.middleware.request_context import RequestContextMiddleware
+from backend.middleware.security_headers import SecurityHeadersMiddleware
 from langfuse import propagate_attributes
-from pydantic import BaseModel
+from backend.core.config import get_settings
+from backend.schemas.consultation import (
+    TranscriptRequest,
+    VitalsUpdate,
+    RecordUpdateRequest,
+)
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 from backend.login_service import router as login_router, initialize_default_users
@@ -49,50 +56,34 @@ from backend.security import (
     decrypt_text,
     encrypt_bytes,
     encrypt_text,
+)
+
+from backend.guards.auth import (
+    require_admin,
     require_doctor,
     require_doctor_or_admin,
+)
 
-    require_admin,)
+from backend.guards.audio import validate_audio
+from backend.services.storage_service import save_encrypted_audio_file
+from backend.services.secure_json_service import encrypt_json, decrypt_json
+from backend.services.consultation_service import save_consultation_record
+
 from backend.transcription import transcribe_audio
+from backend.utils.time_utils import get_timestamp
+from backend.utils.hashing import calculate_audio_hash
+from backend.utils.id_utils import generate_patient_id
 
 
 # ============================================================
-# ENVIRONMENT
+# CENTRALIZED CONFIGURATION
 # ============================================================
 
-load_dotenv()
+settings = get_settings()
 
-
-# ============================================================
-# PROJECT PATHS
-# ============================================================
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-STORAGE_DIR_ENV = os.getenv(
-    "STORAGE_DIR",
-    "",
-).strip()
-
-if STORAGE_DIR_ENV:
-    STORAGE_ROOT = Path(STORAGE_DIR_ENV)
-    RECORDINGS_DIR = STORAGE_ROOT / "recordings"
-else:
-    RECORDINGS_DIR = PROJECT_ROOT / "recordings"
-
-RECORDINGS_DIR.mkdir(
-    parents=True,
-    exist_ok=True,
-)
-
-
-# ============================================================
-# DATABASE
-# ============================================================
-
-Base.metadata.create_all(
-    bind=engine
-)
+PROJECT_ROOT = settings.project_root
+STORAGE_DIR_ENV = settings.storage_dir
+RECORDINGS_DIR = settings.recordings_dir
 
 
 def ensure_database_schema():
@@ -150,21 +141,14 @@ ensure_database_schema()
 # ============================================================
 
 INDIA_TIMEZONE = ZoneInfo(
-    "Asia/Kolkata"
+    settings.timezone
 )
 
-MAX_AUDIO_SIZE = (
-    25
-    * 1024
-    * 1024
-)
+MAX_AUDIO_SIZE = settings.max_audio_size_bytes
 
-ALLOWED_AUDIO_EXTENSIONS = {
-    ".wav",
-    ".m4a",
-    ".ogg",
-    ".webm",
-}
+ALLOWED_AUDIO_EXTENSIONS = set(
+    settings.allowed_audio_extensions
+)
 
 
 # ============================================================
@@ -182,46 +166,16 @@ app = FastAPI(
 
 
 # ============================================================
-# SECURITY HEADERS
+# MIDDLEWARE
 # ============================================================
 
-@app.middleware("http")
-async def add_security_headers(
-    request: Request,
-    call_next,
-):
+app.add_middleware(
+    SecurityHeadersMiddleware
+)
 
-    response = await call_next(
-        request
-    )
-
-    response.headers[
-        "X-Content-Type-Options"
-    ] = "nosniff"
-
-    response.headers[
-        "X-Frame-Options"
-    ] = "DENY"
-
-    response.headers[
-        "Referrer-Policy"
-    ] = "no-referrer"
-
-    response.headers[
-        "Permissions-Policy"
-    ] = (
-        "camera=(), "
-        "geolocation=(), "
-        "microphone=()"
-    )
-
-    response.headers[
-        "Cache-Control"
-    ] = "no-store"
-
-    return response
-
-
+app.add_middleware(
+    RequestContextMiddleware
+)
 
 
 # ============================================================
@@ -234,15 +188,9 @@ app.include_router(login_router)
 # CORS
 # ============================================================
 
-allowed_origins = [
-    origin.strip()
-    for origin in os.getenv(
-        "ALLOWED_ORIGINS",
-        "http://localhost:8501,"
-        "http://127.0.0.1:8501",
-    ).split(",")
-    if origin.strip()
-]
+allowed_origins = list(
+    settings.allowed_origins
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -273,393 +221,25 @@ initialize_default_users()
 # REQUEST MODELS
 # ============================================================
 
-class TranscriptRequest(
-    BaseModel
-):
-    transcript: str
-
-
-class VitalsUpdate(
-    BaseModel
-):
-    blood_pressure: str | None = None
-    heart_rate: str | None = None
-    temperature: str | None = None
-    oxygen_saturation: str | None = None
-
-
-class RecordUpdateRequest(
-    BaseModel
-):
-
-    patient_name: str | None = None
-
-    transcript: str | None = None
-
-    chief_complaint: str | None = None
-
-    diagnosis: str | None = None
-
-    symptoms: list | None = None
-
-    medications: list | None = None
-
-    recommended_tests: list | None = None
-
-    doctor_instructions: list | None = None
-
-    follow_up: str | None = None
-
-    vitals: VitalsUpdate | None = None
 
 
 # ============================================================
 # TIME HELPERS
 # ============================================================
-
-def get_timestamp():
-
-    now = datetime.now(
-        INDIA_TIMEZONE
-    )
-
-    return {
-        "date": now.strftime(
-            "%d-%m-%Y"
-        ),
-        "time": now.strftime(
-            "%I:%M %p"
-        ),
-        "datetime": now.isoformat(),
-    }
-
-
-# ============================================================
-# PATIENT HELPERS
-# ============================================================
-
-def generate_patient_id():
-
-    return (
-        "PAT-"
-        + uuid.uuid4().hex[
-            :8
-        ].upper()
-    )
-
-
 # ============================================================
 # AUDIO HELPERS
 # ============================================================
 
-def calculate_audio_hash(
-    audio_bytes: bytes,
-):
-
-    return hashlib.sha256(
-        audio_bytes
-    ).hexdigest()
-
-
-def validate_audio(
-    audio_bytes: bytes,
-    filename: str,
-):
-
-    if not audio_bytes:
-
-        raise HTTPException(
-            status_code=400,
-            detail="Audio file is empty.",
-        )
-
-    if (
-        len(audio_bytes)
-        > MAX_AUDIO_SIZE
-    ):
-
-        raise HTTPException(
-            status_code=413,
-            detail=(
-                "Audio file is too large. "
-                "Maximum size is 25 MB."
-            ),
-        )
-
-    extension = Path(
-        filename
-    ).suffix.lower()
-
-    if (
-        extension
-        not in ALLOWED_AUDIO_EXTENSIONS
-    ):
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Unsupported audio format."
-            ),
-        )
-
-    return extension
-
-
-def save_encrypted_audio_file(
-    audio_bytes: bytes,
-):
-
-    encrypted_audio = (
-        encrypt_bytes(
-            audio_bytes
-        )
-    )
-
-    stored_filename = (
-        f"{uuid.uuid4().hex}.audio.enc"
-    )
-
-    stored_path = (
-        RECORDINGS_DIR
-        / stored_filename
-    )
-
-    with open(
-        stored_path,
-        "wb",
-    ) as file:
-
-        file.write(
-            encrypted_audio
-        )
-
-    return (
-        stored_filename,
-        stored_path,
-    )
 
 
 # ============================================================
 # JSON HELPERS
 # ============================================================
 
-def json_dumps(
-    value,
-):
-
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-    )
-
-
-def json_loads_safe(
-    value,
-    default,
-):
-
-    if value is None:
-        return default
-
-    try:
-
-        return json.loads(
-            value
-        )
-
-    except Exception:
-
-        return default
-
-
-# ============================================================
-# ENCRYPTION HELPERS
-# ============================================================
-
-def encrypt_json(
-    value,
-):
-
-    return encrypt_text(
-        json_dumps(
-            value
-        )
-    )
-
-
-def decrypt_json(
-    value,
-    default,
-):
-
-    decrypted_value = (
-        decrypt_text(
-            value
-        )
-    )
-
-    return json_loads_safe(
-        decrypted_value,
-        default,
-    )
-
 
 # ============================================================
 # DATABASE SAVE
 # ============================================================
-
-def save_consultation_record(
-    *,
-    patient_name,
-    patient_id,
-    audio_hash,
-    timestamp,
-    stored_filename,
-    stored_path,
-    transcript,
-    clinical_data,
-):
-
-    db: Session = (
-        SessionLocal()
-    )
-
-    try:
-
-        vitals = (
-            clinical_data.get(
-                "vitals"
-            )
-            or {}
-        )
-
-        record = ConsultationRecord(
-
-            patient_name=encrypt_text(
-                patient_name
-            ),
-
-            patient_id=patient_id,
-
-            audio_hash=audio_hash,
-
-            consultation_date=(
-                timestamp["date"]
-            ),
-
-            consultation_time=(
-                timestamp["time"]
-            ),
-
-            consultation_datetime=(
-                timestamp["datetime"]
-            ),
-
-            original_audio_filename=None,
-
-            stored_audio_filename=(
-                stored_filename
-            ),
-
-            audio_path=str(
-                stored_path
-            ),
-
-            transcript=encrypt_text(
-                transcript
-            ),
-
-            chief_complaint=encrypt_text(
-                clinical_data.get(
-                    "chief_complaint"
-                )
-            ),
-
-            diagnosis=encrypt_text(
-                clinical_data.get(
-                    "diagnosis"
-                )
-            ),
-
-            blood_pressure=encrypt_text(
-                vitals.get(
-                    "blood_pressure"
-                )
-            ),
-
-            heart_rate=encrypt_text(
-                vitals.get(
-                    "heart_rate"
-                )
-            ),
-
-            temperature=encrypt_text(
-                vitals.get(
-                    "temperature"
-                )
-            ),
-
-            oxygen_saturation=encrypt_text(
-                vitals.get(
-                    "oxygen_saturation"
-                )
-            ),
-
-            symptoms=encrypt_json(
-                clinical_data.get(
-                    "symptoms",
-                    [],
-                )
-            ),
-
-            medications=encrypt_json(
-                clinical_data.get(
-                    "medications",
-                    [],
-                )
-            ),
-
-            recommended_tests=encrypt_json(
-                clinical_data.get(
-                    "recommended_tests",
-                    [],
-                )
-            ),
-
-            doctor_instructions=encrypt_json(
-                clinical_data.get(
-                    "doctor_instructions",
-                    [],
-                )
-            ),
-
-            follow_up=encrypt_text(
-                clinical_data.get(
-                    "follow_up"
-                )
-            ),
-        )
-
-        db.add(
-            record
-        )
-
-        db.commit()
-
-        db.refresh(
-            record
-        )
-
-        return record.id
-
-    except Exception:
-
-        db.rollback()
-        raise
-
-    finally:
-
-        db.close()
 
 
 # ============================================================
@@ -797,12 +377,8 @@ def root():
 def health():
 
     langfuse_configured = bool(
-        os.getenv(
-            "LANGFUSE_PUBLIC_KEY"
-        )
-        and os.getenv(
-            "LANGFUSE_SECRET_KEY"
-        )
+        settings.langfuse_public_key
+        and settings.langfuse_secret_key
     )
 
     return {
@@ -843,7 +419,7 @@ def health():
     "/transcribe",
     dependencies=[
         Depends(
-            require_doctor
+            require_doctor_or_admin
         )
     ],
 )
@@ -919,7 +495,7 @@ async def transcribe(
     "/extract",
     dependencies=[
         Depends(
-            require_doctor
+            require_doctor_or_admin
         )
     ],
 )
@@ -1005,7 +581,7 @@ def extract(
     "/process-consultation",
     dependencies=[
         Depends(
-            require_doctor
+            require_doctor_or_admin
         )
     ],
 )
@@ -1131,12 +707,12 @@ async def process_consultation(
 
         def run_pipeline():
 
-            transcript = (
-                transcribe_audio(
-                    audio_bytes,
-                    filename,
-                )
+            print("[PIPELINE] Starting transcription...")
+            transcript = transcribe_audio(
+                audio_bytes,
+                filename,
             )
+            print("[PIPELINE] Transcription OK")
 
             audit_event(
                 action="transcription_completed",
@@ -1147,11 +723,11 @@ async def process_consultation(
                 component="transcription",
             )
 
-            clinical_data = (
-                extract_clinical_data(
-                    transcript
-                )
+            print("[PIPELINE] Starting clinical extraction...")
+            clinical_data = extract_clinical_data(
+                transcript
             )
+            print("[PIPELINE] Clinical extraction OK")
 
             audit_event(
                 action="extraction_completed",
@@ -1175,16 +751,18 @@ async def process_consultation(
                 generate_patient_id()
             )
 
-            timestamp = (
-                get_timestamp()
-            )
+            print("[PIPELINE] Creating metadata...")
+            timestamp = get_timestamp()
+            print("[PIPELINE] Metadata OK")
 
+            print("[PIPELINE] Saving encrypted audio...")
             (
                 stored_filename,
                 stored_path,
             ) = save_encrypted_audio_file(
                 audio_bytes
             )
+            print("[PIPELINE] Encrypted audio OK")
 
             record_id = (
                 save_consultation_record(
@@ -1381,6 +959,7 @@ async def process_consultation(
         print(
             "Process consultation error:",
             type(error).__name__,
+            str(error),
         )
 
         raise HTTPException(

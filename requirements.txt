@@ -16,3 +16,4 @@ openai==3.6.0
 
 pwdlib[argon2]
 PyJWT
+pytest==9.1.1

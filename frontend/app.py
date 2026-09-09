@@ -1,4 +1,6 @@
-﻿import os
+import os
+import sys
+from pathlib import Path
 from datetime import datetime, timezone
 from html import escape
 from io import BytesIO
@@ -7,6 +9,13 @@ from textwrap import dedent
 import requests
 import streamlit as st
 from dotenv import load_dotenv
+
+# Support Streamlit launches with frontend/ as the script directory.
+project_root = str(Path(__file__).resolve().parents[1])
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from app_guide import render_usage_guide
 
 try:
     from frontend.handsfree_recorder import render_handsfree_recorder
@@ -50,7 +59,7 @@ def get_fastapi_url():
     except Exception:
         pass
 
-    return "http://127.0.0.1:8000"
+    return "http://127.0.0.1:8001"
 
 
 FASTAPI_URL = get_fastapi_url()
@@ -74,14 +83,19 @@ def api_headers():
         "access_token"
     )
 
-    if not access_token:
-        return {}
+    if access_token:
+        return {
+            "Authorization": (
+                f"Bearer {access_token}"
+            )
+        }
 
-    return {
-        "Authorization": (
-            f"Bearer {access_token}"
-        )
-    }
+    if MEDICAL_SCRIBE_API_KEY:
+        return {
+            "X-API-Key": MEDICAL_SCRIBE_API_KEY
+        }
+
+    return {}
 
 
 # ============================================================
@@ -510,210 +524,66 @@ def show_api_error(response):
 # STYLING
 # ============================================================
 
-st.markdown(
-    dedent("""
-    <style>
-
-    .stApp {
-        background:
-            linear-gradient(
-                180deg,
-                #f8fafc 0%,
-                #f1f5f9 100%
-            );
-    }
-
-    .block-container {
-        max-width: 1500px;
-        padding-top: 1.5rem;
-        padding-bottom: 3rem;
-    }
-
-    .main-header {
-        background: white;
-        border: 1px solid #e2e8f0;
-        border-radius: 18px;
-        padding: 20px 24px;
-        margin-bottom: 18px;
-        box-shadow:
-            0 4px 18px rgba(
-                15,
-                23,
-                42,
-                0.05
-            );
-    }
-
-    .hero-card {
-        background:
-            linear-gradient(
-                135deg,
-                #ffffff,
-                #f8fafc
-            );
-        border: 1px solid #e2e8f0;
-        border-radius: 18px;
-        padding: 24px;
-        margin-bottom: 18px;
-    }
-
-    .medical-card {
-        background: white;
-        border: 1px solid #e2e8f0;
-        border-radius: 16px;
-        padding: 20px;
-        margin-bottom: 15px;
-        box-shadow:
-            0 2px 12px rgba(
-                15,
-                23,
-                42,
-                0.04
-            );
-    }
-
-    .status-online {
-        display: inline-block;
-        padding: 7px 13px;
-        border-radius: 999px;
-        background: #dcfce7;
-        color: #166534;
-        font-weight: 600;
-        font-size: 13px;
-    }
-
-    .status-offline {
-        display: inline-block;
-        padding: 7px 13px;
-        border-radius: 999px;
-        background: #fee2e2;
-        color: #991b1b;
-        font-weight: 600;
-        font-size: 13px;
-    }
-
-    .section-title {
-        font-size: 18px;
-        font-weight: 700;
-        color: #0f172a;
-        margin-bottom: 8px;
-    }
-
-    .small-muted {
-        color: #64748b;
-        font-size: 13px;
-    }
-
-    .result-label {
-        color: #64748b;
-        font-size: 12px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: .04em;
-    }
-
-    .result-value {
-        color: #0f172a;
-        font-size: 15px;
-        margin-top: 4px;
-    }
-
-    div[data-testid="stMetric"] {
-        background: white;
-        border: 1px solid #e2e8f0;
-        padding: 12px;
-        border-radius: 12px;
-    }
-
-    .stButton > button {
-        border-radius: 10px;
-        font-weight: 600;
-    }
-
-    textarea {
-        border-radius: 10px !important;
-    }
-
-    
-/* Analyze & Save Consultation primary button */
-div.stButton > button[kind="primary"] {
-    background-color: #2563EB !important;
-    color: #FFFFFF !important;
-    border: 1px solid #2563EB !important;
-    font-weight: 700 !important;
-}
-
-div.stButton > button[kind="primary"]:hover {
-    background-color: #1D4ED8 !important;
-    color: #FFFFFF !important;
-    border-color: #1D4ED8 !important;
-}
-
-div.stButton > button[kind="primary"]:disabled {
-    background-color: #94A3B8 !important;
-    color: #FFFFFF !important;
-    opacity: 0.85 !important;
-}
-
-</style>
-    """),
-    unsafe_allow_html=True,
-)
-
-
-# Production clinical workspace theme.
+# Soft sage clinical workspace theme.
 st.markdown(
     dedent("""
     <style>
     :root {
-        --mn-bg:#f3f6f9; --mn-surface:#ffffff; --mn-soft:#f8fafb;
-        --mn-ink:#142536; --mn-muted:#687b8e; --mn-border:#dfe7ec;
-        --mn-teal:#13877f; --mn-teal-dark:#0c6e68; --mn-teal-soft:#e8f6f4;
-        --mn-danger:#c94d58; --mn-shadow:0 8px 24px rgba(25,49,72,.055);
+        --mn-bg:#f5f7f4; --mn-surface:#ffffff; --mn-soft:#f4f8f5;
+        --mn-ink:#233e37; --mn-muted:#62766e; --mn-border:#dfe8e2;
+        --mn-teal:#337d68; --mn-teal-dark:#24604f; --mn-teal-soft:#eaf4ee;
+        --mn-danger:#c94d58; --mn-shadow:0 8px 32px rgba(37,70,54,.045);
     }
-    .stApp { color:var(--mn-ink); background:var(--mn-bg); }
+    .stApp { color:var(--mn-ink); background:radial-gradient(ellipse at 95% 0%,#e5efe6 0%,transparent 45%),var(--mn-bg); }
     .block-container { max-width:1400px; padding:1.65rem 2.25rem 2.5rem; }
-    header[data-testid="stHeader"] { background:rgba(243,246,249,.88); backdrop-filter:blur(12px); }
+    /* Remove Streamlit's top bar while keeping sidebar navigation accessible. */
+    header[data-testid="stHeader"] {
+        background:transparent!important; backdrop-filter:none; height:0;
+        border:none; box-shadow:none; pointer-events:none; overflow:visible;
+    }
+    header[data-testid="stHeader"] button { pointer-events:auto; }
+    [data-testid="stToolbar"], [data-testid="stDecoration"],
+    [data-testid="stAppDeployButton"] { display:none!important; }
     #MainMenu, footer { visibility:hidden; }
 
     section[data-testid="stSidebar"] {
-        width:292px!important; background:#0b1f33;
+        width:292px!important; background:#203e35;
         border-right:1px solid rgba(255,255,255,.08);
     }
     section[data-testid="stSidebar"] > div:first-child { padding:1.15rem .85rem 1rem; }
     section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
-        background:linear-gradient(145deg,rgba(18,166,153,.12),transparent 38%),#0b1f33;
+        background:linear-gradient(145deg,rgba(156,198,161,.13),transparent 38%),#203e35;
     }
     .mn-brand { display:flex; align-items:center; gap:12px; padding:6px 8px 18px;
         border-bottom:1px solid rgba(255,255,255,.09); margin-bottom:18px; }
     .mn-logo { display:grid; place-items:center; width:42px; height:42px; flex:0 0 42px;
-        border-radius:10px; background:#19a79b; color:#fff; font-size:24px; font-weight:700;
+        border-radius:16px; background:#6b9f82; color:#fff; font-size:24px; font-weight:700;
         box-shadow:0 8px 20px rgba(25,167,155,.22); }
     .mn-brand-name { color:#fff; font-size:1.18rem; line-height:1.2; font-weight:750; }
-    .mn-brand-tag { color:#91a6bc; font-size:.76rem; margin-top:3px; }
-    .mn-nav-label { color:#7089a1; font-size:.68rem; font-weight:700; letter-spacing:.08em;
+    .mn-brand-tag { color:#b1c6ba; font-size:.76rem; margin-top:3px; }
+    .mn-nav-label { color:#a3bdb0; font-size:.68rem; font-weight:700; letter-spacing:.08em;
         padding:5px 11px 7px; }
     .mn-profile { display:flex; align-items:center; gap:11px; padding:12px; margin:18px 3px 10px;
-        border:1px solid rgba(255,255,255,.09); border-radius:8px; background:rgba(255,255,255,.045); }
+        border:1px solid rgba(255,255,255,.09); border-radius:16px; background:rgba(255,255,255,.045); }
     .mn-avatar { display:grid; place-items:center; width:36px; height:36px; flex:0 0 36px;
         border-radius:50%; background:#e9f7f5; color:#087f75; font-size:.76rem; font-weight:800; }
     .mn-profile-name { color:#f7fbff; font-size:.86rem; font-weight:650; line-height:1.2; }
-    .mn-profile-role { color:#8298ae; font-size:.71rem; margin-top:3px; text-transform:capitalize; }
-    .mn-health { display:flex; align-items:center; gap:8px; color:#8fa5b9; font-size:.73rem;
+    .mn-profile-role { color:#adc3b7; font-size:.71rem; margin-top:3px; text-transform:capitalize; }
+    .mn-health { display:flex; align-items:center; gap:8px; color:#b4c9bd; font-size:.73rem;
         padding:4px 10px 10px; }
     .mn-health-dot { width:7px; height:7px; border-radius:50%; background:#35c98f;
         box-shadow:0 0 0 3px rgba(53,201,143,.12); }
     .mn-health-dot.offline { background:#df6670; box-shadow:0 0 0 3px rgba(223,102,112,.12); }
     section[data-testid="stSidebar"] .stButton button { width:100%; min-height:43px; justify-content:flex-start;
-        padding:.5rem .75rem; border:1px solid transparent; border-radius:8px; background:transparent;
-        color:#b9c8d7; font-size:.86rem; font-weight:550; }
+        padding:.5rem .75rem; border:1px solid transparent; border-radius:16px; background:transparent;
+        color:#d0ded5; font-size:.86rem; font-weight:550; }
     section[data-testid="stSidebar"] .stButton button:hover { color:#fff; background:rgba(255,255,255,.065);
         border-color:rgba(255,255,255,.05); transform:none; box-shadow:none; }
-    section[data-testid="stSidebar"] .stButton button[kind="primary"] { color:#fff; background:#147f79;
-        border-color:#27968f; box-shadow:0 5px 14px rgba(0,0,0,.16); }
+    section[data-testid="stSidebar"] .stButton button[kind="primary"] { color:#fff; background:#39634f;
+        border-color:#628772; box-shadow:0 5px 14px rgba(0,0,0,.16); }
     section[data-testid="stSidebar"] div[data-testid="stButton"] { margin-bottom:2px; }
     .mn-sidebar-link { display:flex; align-items:center; min-height:43px; padding:11px 12px; margin-bottom:2px;
-        border:1px solid transparent; border-radius:8px; color:#b9c8d7!important; font-size:.86rem;
+        border:1px solid transparent; border-radius:16px; color:#d0ded5!important; font-size:.86rem;
         font-weight:550; text-decoration:none!important; }
     .mn-sidebar-link:hover { color:#fff!important; background:rgba(255,255,255,.065); }
 
@@ -721,7 +591,7 @@ st.markdown(
         padding:2px 0 20px; margin-bottom:20px; border-bottom:1px solid var(--mn-border); }
     .mn-eyebrow { color:var(--mn-teal-dark); font-size:.7rem; font-weight:800; letter-spacing:.08em;
         text-transform:uppercase; margin-bottom:6px; }
-    .mn-title { color:var(--mn-ink); font-size:1.72rem; line-height:1.2; font-weight:760; }
+    .mn-title { color:var(--mn-ink); font-size:2.15rem; line-height:1.2; font-weight:700; }
     .mn-subtitle { max-width:690px; color:var(--mn-muted); font-size:.88rem; margin-top:5px; }
     .mn-status { display:inline-flex; align-items:center; gap:7px; flex:0 0 auto; padding:7px 10px;
         border:1px solid #c7ead7; border-radius:999px; color:#176b50; background:#eaf7f0;
@@ -730,7 +600,7 @@ st.markdown(
     .mn-status i { width:7px; height:7px; border-radius:50%; background:#27a96f; }
     .mn-status.offline i { background:#d85d68; }
     .mn-record-state { display:flex; align-items:center; gap:11px; min-height:52px; padding:10px 13px;
-        margin:10px 0 12px; border:1px solid #d7e5e4; border-radius:8px; background:#f5faf9; }
+        margin:10px 0 12px; border:1px solid #d7e5e4; border-radius:16px; background:#f5faf9; }
     .mn-record-dot { width:11px; height:11px; flex:0 0 11px; border-radius:50%; background:#79909f;
         box-shadow:0 0 0 4px rgba(121,144,159,.12); }
     .mn-record-state.recording { color:#9f2f3a; border-color:#efc8cd; background:#fff4f5; }
@@ -743,7 +613,7 @@ st.markdown(
     .mn-record-detail { color:var(--mn-muted); font-size:.72rem; margin-top:3px; }
     @keyframes mn-pulse { 0% { box-shadow:0 0 0 0 rgba(219,70,84,.38); }
         70% { box-shadow:0 0 0 10px rgba(219,70,84,0); } 100% { box-shadow:0 0 0 0 rgba(219,70,84,0); } }
-    div[data-testid="stAudioInput"] { padding:14px; border:1px solid var(--mn-border); border-radius:8px;
+    div[data-testid="stAudioInput"] { padding:14px; border:1px solid var(--mn-border); border-radius:16px;
         background:var(--mn-soft); }
     .main-header { display:none; }
     .hero-card { display:none; }
@@ -758,14 +628,14 @@ st.markdown(
     hr { border-color:var(--mn-border)!important; margin:1.4rem 0!important; }
 
     div[data-testid="stVerticalBlockBorderWrapper"] { background:var(--mn-surface); border:1px solid var(--mn-border);
-        border-radius:8px; box-shadow:var(--mn-shadow); }
+        border-radius:16px; box-shadow:var(--mn-shadow); }
     div[data-testid="stMetric"] { min-height:100px; padding:16px 17px; border:1px solid var(--mn-border);
-        border-radius:8px; background:var(--mn-surface); box-shadow:var(--mn-shadow); }
+        border-radius:16px; background:var(--mn-surface); box-shadow:var(--mn-shadow); }
     div[data-testid="stMetricLabel"] { color:var(--mn-muted); font-size:.76rem; font-weight:650; }
     div[data-testid="stMetricValue"] { color:var(--mn-ink); font-size:1.18rem; font-weight:750; }
 
-    .stButton>button, .stFormSubmitButton>button { min-height:42px; border-radius:8px; border-color:#ccd8df;
-        color:#294052; background:#fff; font-weight:650; transition:transform 120ms ease,box-shadow 120ms ease; }
+    .stButton>button, .stFormSubmitButton>button { min-height:42px; border-radius:16px; border-color:#ccd8df;
+        color:#294052; background:#fff; font-weight:650; transition:transform 180ms ease,box-shadow 180ms ease; }
     .stButton>button:hover, .stFormSubmitButton>button:hover { color:var(--mn-teal-dark); border-color:#8dbab6;
         box-shadow:0 5px 14px rgba(25,49,72,.08); transform:translateY(-1px); }
     .stButton>button[kind="primary"], .stFormSubmitButton>button[kind="primary"] { color:#fff!important;
@@ -775,28 +645,28 @@ st.markdown(
         color:#fff!important; background:var(--mn-teal-dark)!important; }
 
     div[data-testid="stTabs"] [data-baseweb="tab-list"] { gap:4px; padding:4px; border:1px solid var(--mn-border);
-        border-radius:8px; background:#eaf0f3; overflow-x:auto; }
-    div[data-testid="stTabs"] button { min-height:38px; padding:7px 13px; border-radius:6px; white-space:nowrap; }
+        border-radius:16px; background:#eaf0eb; overflow-x:auto; }
+    div[data-testid="stTabs"] button { min-height:38px; padding:7px 13px; border-radius:11px; white-space:nowrap; }
     div[data-testid="stTabs"] button[aria-selected="true"] { color:var(--mn-teal-dark); background:#fff;
         box-shadow:0 2px 7px rgba(25,49,72,.08); }
     div[data-testid="stTabs"] [data-baseweb="tab-highlight"] { display:none; }
     div[data-testid="stFileUploaderDropzone"] { min-height:126px; padding:1.15rem; border:1px dashed #a9c7c4;
-        border-radius:8px!important; background:#f6fbfa; }
+        border-radius:16px!important; background:#f6fbfa; }
     .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"]>div {
-        border-radius:8px!important; border-color:#ccd8df; background:#fff; }
+        border-radius:16px!important; border-color:#ccd8df; background:#fff; }
     .stTextInput input { min-height:44px; }
-    div[data-testid="stExpander"] { border:1px solid var(--mn-border); border-radius:8px!important;
+    div[data-testid="stExpander"] { border:1px solid var(--mn-border); border-radius:16px!important;
         background:var(--mn-surface); box-shadow:0 4px 14px rgba(25,49,72,.035); }
-    div[data-testid="stForm"] { padding:1.35rem; border:1px solid var(--mn-border); border-radius:8px;
+    div[data-testid="stForm"] { padding:1.8rem; border:1px solid var(--mn-border); border-radius:16px;
         background:var(--mn-surface); box-shadow:var(--mn-shadow); }
-    div[data-testid="stAlert"] { border-radius:8px; border-width:1px; }
+    div[data-testid="stAlert"] { border-radius:16px; border-width:1px; }
     audio { width:100%; }
 
     .mn-login { max-width:520px; margin:46px auto 22px; text-align:center; }
     .mn-login-mark { display:grid; place-items:center; width:48px; height:48px; margin:0 auto 14px;
-        border-radius:10px; color:#fff; background:var(--mn-teal); font-size:26px; font-weight:750;
+        border-radius:16px; color:#fff; background:var(--mn-teal); font-size:26px; font-weight:750;
         box-shadow:0 9px 22px rgba(19,135,127,.2); }
-    .mn-login-title { color:var(--mn-ink); font-size:1.7rem; font-weight:760; }
+    .mn-login-title { color:var(--mn-ink); font-size:2.15rem; font-weight:700; }
     .mn-login-copy { color:var(--mn-muted); font-size:.88rem; margin-top:5px; }
 
     .mn-footer { display:flex; flex-wrap:wrap; gap:8px 18px; padding:20px 2px 2px; margin-top:25px;
@@ -811,6 +681,67 @@ st.markdown(
         div[data-testid="stHorizontalBlock"] { gap:.75rem; }
         div[data-testid="column"] { min-width:0!important; }
         div[data-testid="stMetric"] { min-height:86px; padding:12px; }
+    }
+
+    /* Shared surfaces and clear, accessible interaction states. */
+    .stApp { font-family:"Segoe UI",system-ui,-apple-system,sans-serif; }
+    .mn-title,.mn-login-title { letter-spacing:-.045em; }
+    .mn-subtitle,.mn-login-copy { line-height:1.7; }
+    .mn-eyebrow { letter-spacing:.14em; font-size:.66rem; margin-bottom:10px; }
+    .mn-logo { border-radius:14px; }
+    .mn-brand { padding-bottom:25px; margin-bottom:24px; }
+    .mn-profile { margin-top:32px; padding:15px; }
+    .mn-nav-label { padding-top:12px; padding-bottom:12px; }
+    .mn-login { margin:48px auto 28px; }
+    .mn-login-mark { width:58px; height:58px; border-radius:19px;
+        background:linear-gradient(145deg,#699a7d,#337d68); margin-bottom:22px; }
+    .mn-login-copy { max-width:370px; margin:12px auto 0; }
+    .mn-login-note { text-align:center; color:var(--mn-muted); font-size:.75rem;
+        line-height:1.7; margin:18px 0; }
+    .section-title { display:flex; align-items:center; gap:10px; margin:8px 0 18px; }
+    .mn-step { display:inline-grid; place-items:center; width:28px; height:28px;
+        border-radius:9px; background:#e6efe7; color:#426a53; font-size:.72rem; }
+    [data-testid="stMain"] .st-key-capture_panel,
+    [data-testid="stMain"] .st-key-summary_panel {
+        background:rgba(255,255,255,.92); padding:24px; border:1px solid var(--mn-border);
+        border-radius:22px; box-shadow:var(--mn-shadow); }
+    .mn-empty { padding:42px 22px; text-align:center; background:linear-gradient(150deg,#f4f8f3,#fafbf8);
+        border:1px dashed #cbdccf; border-radius:18px; margin-top:8px; }
+    .mn-empty-icon { width:58px; height:66px; margin:0 auto 22px; border:1px solid #c7dace;
+        border-radius:12px; background:white; padding:16px 12px; box-shadow:5px 5px 0 #e6eee5; }
+    .mn-empty-icon i { display:block; height:3px; margin:6px 0; border-radius:3px; background:#9bb8a4; }
+    .mn-empty-icon i:last-child { width:65%; }
+    .mn-empty-title { font-size:1.08rem; font-weight:650; color:var(--mn-ink); }
+    .mn-empty-copy { max-width:290px; margin:10px auto 0; font-size:.84rem;
+        line-height:1.8; color:var(--mn-muted); }
+    .stTextInput [data-baseweb="input"], .stTextArea [data-baseweb="textarea"] {
+        border:1px solid #d8e3da; border-radius:12px; background:#fbfcfa;
+        transition:border-color 180ms ease,box-shadow 180ms ease; }
+    .stTextInput [data-baseweb="input"]:focus-within,
+    .stTextArea [data-baseweb="textarea"]:focus-within {
+        border-color:var(--mn-teal); box-shadow:0 0 0 3px rgba(51,125,104,.12); }
+    .stButton>button:focus-visible,.stFormSubmitButton>button:focus-visible,
+    [data-baseweb="tab"]:focus-visible { outline:3px solid #78a990; outline-offset:3px; }
+    .stButton>button:disabled,.stFormSubmitButton>button:disabled {
+        background:#edf1ed!important; color:#78877c!important; border-color:#dce4dd!important;
+        box-shadow:none; transform:none; cursor:not-allowed; }
+    div[data-testid="stTabs"] [data-baseweb="tab-border"] { display:none; }
+    div[data-testid="stTabs"] [data-baseweb="tab-panel"] { padding-top:18px; }
+    div[data-testid="stMetric"] { border-radius:15px; box-shadow:none; background:#f7faf6; }
+    div[data-testid="stFileUploaderDropzone"] { padding:1.5rem; background:#f7faf5; }
+    div[data-testid="stDownloadButton"] button { border-radius:12px; min-height:42px; }
+    .mn-footer { color:#62766e; }
+    @media (max-width:768px) {
+        .mn-page-header { flex-wrap:wrap; }
+        .mn-title,.mn-login-title { font-size:1.7rem; }
+        .mn-login { margin-top:18px; }
+        [data-testid="stMain"] .st-key-capture_panel,
+        [data-testid="stMain"] .st-key-summary_panel { padding:16px; border-radius:18px; }
+        .mn-empty { padding:28px 14px; }
+    }
+    @media (prefers-reduced-motion:reduce) {
+        .stApp *, .stApp *::before, .stApp *::after {
+            animation:none!important; transition:none!important; scroll-behavior:auto!important; }
     }
     </style>
     """),
@@ -972,7 +903,7 @@ if not st.session_state.get(
         <div class="mn-login">
             <div class="mn-login-mark">+</div>
             <div class="mn-login-title">Welcome to MediNote</div>
-            <div class="mn-login-copy">Secure clinical documentation workspace</div>
+            <div class="mn-login-copy">More presence with patients. Less time on paperwork.</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -989,26 +920,33 @@ if not st.session_state.get(
         ):
 
             st.markdown(
-                "### Sign in as Doctor and Admin"
+                "### Sign in to your workspace"
             )
 
             username = st.text_input(
-                "Username"
+                "Username",
+                placeholder="Enter your username",
             )
 
             password = st.text_input(
                 "Password",
                 type="password",
+                placeholder="Enter your password",
             )
 
             login_button = (
                 st.form_submit_button(
-                    "Login",
+                    "Sign in",
                     type="primary",
                     use_container_width=True,
                 )
             )
 
+
+        st.markdown(
+            '<div class="mn-login-note">For authorized doctors and administrators</div>',
+            unsafe_allow_html=True,
+        )
 
         if login_button:
 
@@ -1138,7 +1076,7 @@ with st.sidebar:
     )
 
     if st.button(
-        "＋  Consultation",
+        "+  Consultation",
         type=(
             "primary"
             if st.session_state.workspace_view == "consultation"
@@ -1147,6 +1085,15 @@ with st.sidebar:
         use_container_width=True,
     ):
         st.session_state.workspace_view = "consultation"
+        st.rerun()
+
+    if st.button(
+        "📖  How to Use",
+        key="sidebar_usage_guide",
+        type="primary" if st.session_state.workspace_view == "guide" else "secondary",
+        use_container_width=True,
+    ):
+        st.session_state.workspace_view = "guide"
         st.rerun()
 
     if st.button(
@@ -1197,13 +1144,17 @@ with st.sidebar:
     )
 
     if st.button(
-        "↪  Sign out",
+        "🚪  Sign out",
         use_container_width=True,
     ):
         clear_auth_session()
         st.session_state["last_activity_time"] = None
         st.rerun()
 
+
+if st.session_state.workspace_view == "guide":
+    render_usage_guide()
+    st.stop()
 
 if st.session_state.workspace_view == "history":
     render_history_view(backend_online)
@@ -1251,7 +1202,7 @@ with header_actions:
     )
 
     if st.button(
-        "＋  New Consultation",
+        "+  New Consultation",
         key="header_new_consultation",
         use_container_width=True,
     ):
@@ -1276,10 +1227,10 @@ left_column, right_column = st.columns(
 # LEFT COLUMN
 # ============================================================
 
-with left_column:
+with left_column, st.container(key="capture_panel"):
 
     st.markdown(
-        '<div class="section-title">New Consultation</div>',
+        '<div class="section-title"><span class="mn-step">01</span> Capture consultation</div>',
         unsafe_allow_html=True,
     )
 
@@ -1789,10 +1740,10 @@ with left_column:
 # RIGHT COLUMN
 # ============================================================
 
-with right_column:
+with right_column, st.container(key="summary_panel"):
 
     st.markdown(
-        '<div class="section-title">Clinical Summary</div>',
+        '<div class="section-title"><span class="mn-step">02</span> Clinical summary</div>',
         unsafe_allow_html=True,
     )
 
@@ -1807,9 +1758,16 @@ with right_column:
 
     if not clinical_data:
 
-        st.info(
-            "Structured clinical information "
-            "will appear here after processing."
+        st.markdown(
+            """
+            <div class="mn-empty">
+                <div class="mn-empty-icon" aria-hidden="true"><i></i><i></i><i></i></div>
+                <div class="mn-empty-title">Your notes start here</div>
+                <div class="mn-empty-copy">Record or upload a consultation.
+                    Your structured clinical summary will appear here, ready for your review.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
 
@@ -2998,3 +2956,4 @@ st.caption(
     "AI-generated clinical information must be reviewed and verified by an "
     "authorized healthcare professional before clinical use."
 )
+

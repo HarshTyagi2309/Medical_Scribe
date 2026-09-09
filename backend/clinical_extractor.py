@@ -31,14 +31,10 @@ OPENAI_API_KEY = os.getenv(
 ).strip()
 
 
-if not GROQ_API_KEY:
-    raise ValueError(
-        "GROQ_API_KEY is missing from .env"
-    )
-
-
-groq_client = Groq(
-    api_key=GROQ_API_KEY
+groq_client = (
+    Groq(api_key=GROQ_API_KEY)
+    if GROQ_API_KEY
+    else None
 )
 
 

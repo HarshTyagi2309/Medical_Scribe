@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import threading
 import time
 import wave
@@ -26,13 +27,18 @@ load_dotenv()
 # CONFIGURATION
 # ============================================================
 
-WAKE_PHRASE = "start recording"
+WAKE_PHRASES = (
+    "start recording",
+    "start the recording",
+    "start record",
+    "begin recording",
+)
 
 SILENCE_SECONDS = 5.0
 
-WAKE_WINDOW_SECONDS = 4.0
+WAKE_WINDOW_SECONDS = 5.0
 
-WAKE_CHECK_INTERVAL_SECONDS = 2.5
+WAKE_CHECK_INTERVAL_SECONDS = 1.0
 
 MIN_RECORDING_SECONDS = 2.0
 
@@ -40,7 +46,7 @@ MIN_RECORDING_SECONDS = 2.0
 SILENCE_RMS = float(
     os.getenv(
         "HANDS_FREE_SILENCE_RMS",
-        "0.012",
+        "0.006",
     )
 )
 
@@ -57,7 +63,7 @@ GROQ_API_KEY = os.getenv(
 
 WAKE_TRANSCRIPTION_MODEL = os.getenv(
     "WAKE_TRANSCRIPTION_MODEL",
-    "whisper-large-v3",
+    "whisper-large-v3-turbo",
 ).strip()
 
 
@@ -392,14 +398,11 @@ class HandsFreeState:
             )
 
 
-            # Remove completed audio reference
-            # immediately after processing handoff.
             self.completed_wav = (
                 None
             )
 
 
-            # Clear temporary microphone buffers.
             self.wake_buffer.clear()
 
 
@@ -449,149 +452,194 @@ def detect_wake_phrase(
     pcm_snapshot: bytes,
     sample_rate: int,
 ):
+    """
+    Transcribe the rolling microphone buffer and detect the
+    configured wake phrase.
+
+    This function runs in a background thread so the WebRTC
+    audio callback never blocks on the transcription API.
+    """
 
     try:
-
         if groq_client is None:
+            print(
+                "[HANDS-FREE] GROQ_API_KEY is not configured."
+            )
 
             with state.lock:
-
                 state.status = (
-                    "Please try again "
-                    "after some time."
+                    "Wake phrase service is unavailable."
                 )
 
             return
 
+        if not pcm_snapshot:
+            return
 
         wav_bytes = pcm_to_wav(
             pcm_snapshot,
             sample_rate,
         )
 
+        print(
+            "[HANDS-FREE] Checking microphone audio for wake phrase..."
+        )
 
         response = (
             groq_client
             .audio
             .transcriptions
             .create(
-
                 file=(
                     "wake_command.wav",
                     wav_bytes,
                 ),
-
-                model=(
-                    WAKE_TRANSCRIPTION_MODEL
-                ),
-
+                model=WAKE_TRANSCRIPTION_MODEL,
                 response_format="json",
-
                 temperature=0.0,
-
+                language="en",
                 prompt=(
-                    'The speaker may say '
-                    '"start recording".'
+                    "Listen carefully for the command "
+                    "'start recording'. "
+                    "The speaker may also say "
+                    "'start the recording', "
+                    "'start record', or "
+                    "'begin recording'."
                 ),
             )
         )
 
-
-        detected_text = (
-            getattr(
-                response,
-                "text",
-                "",
+        # Support both SDK object and dict responses.
+        if isinstance(response, dict):
+            detected_text = (
+                response.get("text", "")
+                or ""
             )
-            or ""
-        ).strip().lower()
+        else:
+            detected_text = (
+                getattr(
+                    response,
+                    "text",
+                    "",
+                )
+                or ""
+            )
 
+        detected_text = str(
+            detected_text
+        ).strip()
 
         normalized_text = (
             detected_text
-            .replace(
-                ".",
-                " ",
-            )
-            .replace(
-                ",",
-                " ",
-            )
+            .lower()
+            .replace(".", " ")
+            .replace(",", " ")
+            .replace("!", " ")
+            .replace("?", " ")
+            .replace("-", " ")
         )
 
-
-        normalized_text = (
-            " ".join(
-                normalized_text.split()
-            )
+        normalized_text = " ".join(
+            normalized_text.split()
         )
-
-
-        with state.lock:
-
-            if (
-                WAKE_PHRASE
-                in normalized_text
-
-                and state.mode
-                == "waiting"
-            ):
-
-                now = (
-                    time.monotonic()
-                )
-
-
-                state.mode = (
-                    "recording"
-                )
-
-
-                state.status = (
-                    "🔴 Recording consultation. "
-                    "Recording will automatically "
-                    "stop after 5 seconds of silence."
-                )
-
-
-                state.recording_buffer.clear()
-
-
-                state.wake_buffer.clear()
-
-
-                state.recording_started_at = (
-                    now
-                )
-
-
-                state.last_speech_at = (
-                    now
-                )
-
-
-    except Exception as error:
 
         print(
-            "Hands-free wake phrase error:",
-            repr(
-                error
-            ),
+            "[HANDS-FREE] Heard:",
+            repr(detected_text),
         )
 
+        print(
+            "[HANDS-FREE] Normalized:",
+            repr(normalized_text),
+        )
 
-    finally:
+        # Exact + tolerant matching.
+        wake_detected = any(
+            phrase in normalized_text
+            for phrase in WAKE_PHRASES
+        )
 
-        pcm_snapshot = None
+        # Whisper can occasionally return small variations.
+        words = set(
+            normalized_text.split()
+        )
 
-        wav_bytes = None
+        if (
+            "start" in words
+            and (
+                "recording" in words
+                or "record" in words
+            )
+        ):
+            wake_detected = True
 
+        if (
+            "begin" in words
+            and "recording" in words
+        ):
+            wake_detected = True
+
+        if not wake_detected:
+            return
 
         with state.lock:
+            if state.mode != "waiting":
+                return
 
-            state.wake_check_running = (
-                False
+            now = time.monotonic()
+
+            state.mode = "recording"
+
+            state.status = (
+                "?? Recording consultation. "
+                "Recording will automatically stop "
+                "after 5 seconds of silence."
             )
+
+            state.recording_buffer.clear()
+
+            # Keep the last short part of microphone audio so
+            # speech immediately following the wake phrase is
+            # less likely to be lost.
+            bytes_per_second = (
+                sample_rate * 2
+            )
+
+            keep_bytes = int(
+                0.35 * bytes_per_second
+            )
+
+            if len(pcm_snapshot) > keep_bytes:
+                state.recording_buffer.extend(
+                    pcm_snapshot[-keep_bytes:]
+                )
+
+            state.wake_buffer.clear()
+
+            state.recording_started_at = now
+            state.last_speech_at = now
+
+        print(
+            "[HANDS-FREE] WAKE PHRASE DETECTED -> RECORDING STARTED"
+        )
+
+    except Exception as error:
+        print(
+            "[HANDS-FREE] Wake detection error:",
+            type(error).__name__,
+            str(error),
+        )
+
+        with state.lock:
+            if state.mode == "waiting":
+                state.status = (
+                    "Listening for "
+                    '"start recording"...'
+                )
+
+    finally:
+        with state.lock:
+            state.wake_check_running = False
 
 
 # ============================================================
@@ -702,9 +750,12 @@ def build_audio_callback(
                     )
 
 
+                    # IMPORTANT:
+                    # Wake phrase detection does NOT depend
+                    # on RMS/speech_detected anymore.
+
                     if (
-                        speech_detected
-                        and enough_audio
+                        enough_audio
                         and wake_interval_ready
                         and not state.wake_check_running
                     ):
@@ -964,6 +1015,7 @@ def render_handsfree_recorder():
     @st.fragment(
         run_every=0.5
     )
+    @st.fragment(run_every=0.5)
     def handsfree_status():
 
         snapshot = (
@@ -977,17 +1029,15 @@ def render_handsfree_recorder():
         ):
 
             st.markdown(
-                """
-                <div class="mn-record-state">
-                    <span class="mn-record-dot"></span>
-                    <div class="mn-record-copy">
-                        <div class="mn-record-label">Listening</div>
-                        <div class="mn-record-detail">
-                            Say &quot;start recording&quot; to begin.
-                        </div>
-                    </div>
-                </div>
-                """,
+                '<div class="mn-record-state">'
+                '<span class="mn-record-dot"></span>'
+                '<div class="mn-record-copy">'
+                '<div class="mn-record-label">Listening</div>'
+                '<div class="mn-record-detail">'
+                'Say &quot;start recording&quot; to begin.'
+                '</div>'
+                '</div>'
+                '</div>',
                 unsafe_allow_html=True,
             )
 
@@ -998,17 +1048,15 @@ def render_handsfree_recorder():
         ):
 
             st.markdown(
-                """
-                <div class="mn-record-state recording">
-                    <span class="mn-record-dot"></span>
-                    <div class="mn-record-copy">
-                        <div class="mn-record-label">Recording</div>
-                        <div class="mn-record-detail">
-                            Audio capture is active. Speak normally.
-                        </div>
-                    </div>
-                </div>
-                """,
+                '<div class="mn-record-state recording">'
+                '<span class="mn-record-dot"></span>'
+                '<div class="mn-record-copy">'
+                '<div class="mn-record-label">Recording</div>'
+                '<div class="mn-record-detail">'
+                'Audio capture is active. Speak normally.'
+                '</div>'
+                '</div>'
+                '</div>',
                 unsafe_allow_html=True,
             )
 
@@ -1019,17 +1067,15 @@ def render_handsfree_recorder():
         ):
 
             st.markdown(
-                """
-                <div class="mn-record-state ready">
-                    <span class="mn-record-dot"></span>
-                    <div class="mn-record-copy">
-                        <div class="mn-record-label">Processing audio</div>
-                        <div class="mn-record-detail">
-                            Recording complete. Preparing the consultation.
-                        </div>
-                    </div>
-                </div>
-                """,
+                '<div class="mn-record-state ready">'
+                '<span class="mn-record-dot"></span>'
+                '<div class="mn-record-copy">'
+                '<div class="mn-record-label">Processing audio</div>'
+                '<div class="mn-record-detail">'
+                'Recording complete. Preparing the consultation.'
+                '</div>'
+                '</div>'
+                '</div>',
                 unsafe_allow_html=True,
             )
 
