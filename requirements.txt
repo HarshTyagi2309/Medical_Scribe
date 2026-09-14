@@ -13,4 +13,6 @@ cryptography
 openai==3.6.0
 pwdlib[argon2]
 PyJWT
-groq==1.6.0
+streamlit==1.62.0
+streamlit-webrtc
+pytest==9.1.1
