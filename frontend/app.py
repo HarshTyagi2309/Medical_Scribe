@@ -70,6 +70,14 @@ MEDICAL_SCRIBE_API_KEY = os.getenv(
     "",
 ).strip()
 
+if not MEDICAL_SCRIBE_API_KEY:
+    try:
+        MEDICAL_SCRIBE_API_KEY = str(
+            st.secrets.get("MEDICAL_SCRIBE_API_KEY", "")
+        ).strip()
+    except Exception:
+        pass
+
 
 ADMIN_API_KEY = os.getenv(
     "ADMIN_API_KEY",
@@ -104,7 +112,7 @@ def api_headers():
 
 st.set_page_config(
     page_title="MediNote",
-    page_icon="ðŸ©º",
+    page_icon="Ã°Å¸Â©Âº",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -1088,7 +1096,7 @@ with st.sidebar:
         st.rerun()
 
     if st.button(
-        "ðŸ“–  How to Use",
+        "Ã°Å¸â€œâ€“  How to Use",
         key="sidebar_usage_guide",
         type="primary" if st.session_state.workspace_view == "guide" else "secondary",
         use_container_width=True,
@@ -1097,7 +1105,7 @@ with st.sidebar:
         st.rerun()
 
     if st.button(
-        "ðŸ“‹  Consultation History",
+        "Ã°Å¸â€œâ€¹  Consultation History",
         type=(
             "primary"
             if st.session_state.workspace_view == "history"
@@ -1144,7 +1152,7 @@ with st.sidebar:
     )
 
     if st.button(
-        "ðŸšª  Sign out",
+        "Ã°Å¸Å¡Âª  Sign out",
         use_container_width=True,
     ):
         clear_auth_session()
@@ -1236,9 +1244,9 @@ with left_column, st.container(key="capture_panel"):
 
     input_tabs = st.tabs(
         [
-            "ðŸŽ™ï¸ Hands-Free",
-            "ðŸŽ¤ Manual Record",
-            "ðŸ“ Upload Audio",
+            "Ã°Å¸Å½â„¢Ã¯Â¸Â Hands-Free",
+            "Ã°Å¸Å½Â¤ Manual Record",
+            "Ã°Å¸â€œÂ Upload Audio",
         ]
     )
 
@@ -1618,7 +1626,7 @@ with left_column, st.container(key="capture_panel"):
     # ========================================================
 
     analyze_button = st.button(
-        "âœ¨ Analyze & Save Consultation",
+        "Ã¢Å“Â¨ Analyze & Save Consultation",
         type="primary",
         use_container_width=True,
         disabled=(
@@ -1917,7 +1925,7 @@ with right_column, st.container(key="summary_panel"):
             for symptom in symptoms:
 
                 st.write(
-                    f"â€¢ {symptom}"
+                    f"Ã¢â‚¬Â¢ {symptom}"
                 )
 
         else:
@@ -2001,7 +2009,7 @@ with right_column, st.container(key="summary_panel"):
                 else:
 
                     st.write(
-                        f"â€¢ {medicine}"
+                        f"Ã¢â‚¬Â¢ {medicine}"
                     )
 
         else:
@@ -2032,7 +2040,7 @@ with right_column, st.container(key="summary_panel"):
             for test in recommended_tests:
 
                 st.write(
-                    f"â€¢ {test}"
+                    f"Ã¢â‚¬Â¢ {test}"
                 )
 
         else:
@@ -2063,7 +2071,7 @@ with right_column, st.container(key="summary_panel"):
             for instruction in doctor_instructions:
 
                 st.write(
-                    f"â€¢ {instruction}"
+                    f"Ã¢â‚¬Â¢ {instruction}"
                 )
 
         else:
@@ -2114,7 +2122,7 @@ if (
     st.divider()
 
     st.markdown(
-        "## âœï¸ Doctor Correction"
+        "## Ã¢Å“ÂÃ¯Â¸Â Doctor Correction"
     )
 
     st.caption(
@@ -2127,7 +2135,7 @@ if (
     if not st.session_state.edit_mode:
 
         if st.button(
-            "âœï¸ Edit Saved Record",
+            "Ã¢Å“ÂÃ¯Â¸Â Edit Saved Record",
             use_container_width=True,
         ):
 
@@ -2392,7 +2400,7 @@ if (
 
                 save_correction = (
                     st.form_submit_button(
-                        "ðŸ’¾ Save Correction",
+                        "Ã°Å¸â€™Â¾ Save Correction",
                         type="primary",
                         use_container_width=True,
                     )
@@ -2631,7 +2639,7 @@ with history_col2:
     st.write("")
 
     refresh_history = st.button(
-        "ðŸ”„ Refresh",
+        "Ã°Å¸â€â€ž Refresh",
         use_container_width=True,
     )
 
@@ -2714,8 +2722,8 @@ if backend_online and MEDICAL_SCRIBE_API_KEY:
 
 
                     title = (
-                        f"{patient_name} â€¢ "
-                        f"{patient_id} â€¢ "
+                        f"{patient_name} Ã¢â‚¬Â¢ "
+                        f"{patient_id} Ã¢â‚¬Â¢ "
                         f"{date} {time}"
                     )
 
