@@ -86,7 +86,8 @@ STORAGE_DIR_ENV = settings.storage_dir
 RECORDINGS_DIR = settings.recordings_dir
 
 
-def ensure_database_schema():
+def Base.metadata.create_all(bind=engine)
+ensure_database_schema():
 
     inspector = inspect(
         engine
@@ -133,6 +134,7 @@ def ensure_database_schema():
                 )
 
 
+Base.metadata.create_all(bind=engine)
 ensure_database_schema()
 
 
