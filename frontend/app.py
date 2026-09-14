@@ -112,7 +112,7 @@ def api_headers():
 
 st.set_page_config(
     page_title="MediNote",
-    page_icon="Ã°Å¸Â©Âº",
+    page_icon="ÃƒÂ°Ã…Â¸Ã‚Â©Ã‚Âº",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -1096,7 +1096,7 @@ with st.sidebar:
         st.rerun()
 
     if st.button(
-        "Ã°Å¸â€œâ€“  How to Use",
+        "ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã¢â‚¬â€œ  How to Use",
         key="sidebar_usage_guide",
         type="primary" if st.session_state.workspace_view == "guide" else "secondary",
         use_container_width=True,
@@ -1105,7 +1105,7 @@ with st.sidebar:
         st.rerun()
 
     if st.button(
-        "Ã°Å¸â€œâ€¹  Consultation History",
+        "ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã¢â‚¬Â¹  Consultation History",
         type=(
             "primary"
             if st.session_state.workspace_view == "history"
@@ -1152,7 +1152,7 @@ with st.sidebar:
     )
 
     if st.button(
-        "Ã°Å¸Å¡Âª  Sign out",
+        "ÃƒÂ°Ã…Â¸Ã…Â¡Ã‚Âª  Sign out",
         use_container_width=True,
     ):
         clear_auth_session()
@@ -1244,9 +1244,9 @@ with left_column, st.container(key="capture_panel"):
 
     input_tabs = st.tabs(
         [
-            "Ã°Å¸Å½â„¢Ã¯Â¸Â Hands-Free",
-            "Ã°Å¸Å½Â¤ Manual Record",
-            "Ã°Å¸â€œÂ Upload Audio",
+            "ÃƒÂ°Ã…Â¸Ã…Â½Ã¢â€žÂ¢ÃƒÂ¯Ã‚Â¸Ã‚Â Hands-Free",
+            "ÃƒÂ°Ã…Â¸Ã…Â½Ã‚Â¤ Manual Record",
+            "ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã‚Â Upload Audio",
         ]
     )
 
@@ -1626,7 +1626,7 @@ with left_column, st.container(key="capture_panel"):
     # ========================================================
 
     analyze_button = st.button(
-        "Ã¢Å“Â¨ Analyze & Save Consultation",
+        "ÃƒÂ¢Ã…â€œÃ‚Â¨ Analyze & Save Consultation",
         type="primary",
         use_container_width=True,
         disabled=(
@@ -1729,14 +1729,14 @@ with left_column, st.container(key="capture_panel"):
 
     if transcript_display:
 
-        st.text_area(
-            "Transcript",
-            value=transcript_display,
-            height=300,
-            disabled=True,
-            label_visibility="collapsed",
+        st.markdown(
+            f"""
+            <div style="white-space:pre-wrap;padding:16px;border:1px solid #dfe8e2;border-radius:16px;background:#fff;min-height:180px;line-height:1.65;">
+            {escape(str(transcript_display))}
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-
     else:
 
         st.info(
@@ -1925,7 +1925,7 @@ with right_column, st.container(key="summary_panel"):
             for symptom in symptoms:
 
                 st.write(
-                    f"Ã¢â‚¬Â¢ {symptom}"
+                    f"ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {symptom}"
                 )
 
         else:
@@ -2009,7 +2009,7 @@ with right_column, st.container(key="summary_panel"):
                 else:
 
                     st.write(
-                        f"Ã¢â‚¬Â¢ {medicine}"
+                        f"ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {medicine}"
                     )
 
         else:
@@ -2040,7 +2040,7 @@ with right_column, st.container(key="summary_panel"):
             for test in recommended_tests:
 
                 st.write(
-                    f"Ã¢â‚¬Â¢ {test}"
+                    f"ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {test}"
                 )
 
         else:
@@ -2071,7 +2071,7 @@ with right_column, st.container(key="summary_panel"):
             for instruction in doctor_instructions:
 
                 st.write(
-                    f"Ã¢â‚¬Â¢ {instruction}"
+                    f"ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {instruction}"
                 )
 
         else:
@@ -2122,7 +2122,7 @@ if (
     st.divider()
 
     st.markdown(
-        "## Ã¢Å“ÂÃ¯Â¸Â Doctor Correction"
+        "## ÃƒÂ¢Ã…â€œÃ‚ÂÃƒÂ¯Ã‚Â¸Ã‚Â Doctor Correction"
     )
 
     st.caption(
@@ -2135,7 +2135,7 @@ if (
     if not st.session_state.edit_mode:
 
         if st.button(
-            "Ã¢Å“ÂÃ¯Â¸Â Edit Saved Record",
+            "ÃƒÂ¢Ã…â€œÃ‚ÂÃƒÂ¯Ã‚Â¸Ã‚Â Edit Saved Record",
             use_container_width=True,
         ):
 
@@ -2400,7 +2400,7 @@ if (
 
                 save_correction = (
                     st.form_submit_button(
-                        "Ã°Å¸â€™Â¾ Save Correction",
+                        "ÃƒÂ°Ã…Â¸Ã¢â‚¬â„¢Ã‚Â¾ Save Correction",
                         type="primary",
                         use_container_width=True,
                     )
@@ -2639,7 +2639,7 @@ with history_col2:
     st.write("")
 
     refresh_history = st.button(
-        "Ã°Å¸â€â€ž Refresh",
+        "ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ¢â‚¬Å¾ Refresh",
         use_container_width=True,
     )
 
@@ -2722,8 +2722,8 @@ if backend_online and MEDICAL_SCRIBE_API_KEY:
 
 
                     title = (
-                        f"{patient_name} Ã¢â‚¬Â¢ "
-                        f"{patient_id} Ã¢â‚¬Â¢ "
+                        f"{patient_name} ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ "
+                        f"{patient_id} ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ "
                         f"{date} {time}"
                     )
 
