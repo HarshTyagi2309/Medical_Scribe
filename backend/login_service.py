@@ -18,10 +18,7 @@ router = APIRouter(
 )
 
 
-DB_PATH = os.path.join(
-    "data",
-    "medical_scribe.db",
-)
+DB_PATH = ("/tmp/medical_scribe_login.db" if os.getenv("VERCEL") else os.path.join("data", "medical_scribe.db"))
 
 MAX_FAILED_ATTEMPTS = int(
     os.getenv(
