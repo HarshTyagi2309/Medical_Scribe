@@ -41,3 +41,4 @@ Thumbs.db
 .streamlit/secrets.toml
 # Local backups
 backups/
+.vercel

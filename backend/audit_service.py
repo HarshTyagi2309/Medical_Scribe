@@ -1,5 +1,6 @@
-import json
+﻿import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -16,11 +17,7 @@ PROJECT_ROOT = (
     .parent
 )
 
-AUDIT_DIR = (
-    PROJECT_ROOT
-    / "data"
-    / "audit"
-)
+AUDIT_DIR = Path(os.getenv("STORAGE_DIR", str(PROJECT_ROOT / "data"))) / "audit"
 
 AUDIT_DIR.mkdir(
     parents=True,
