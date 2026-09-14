@@ -751,6 +751,36 @@ st.markdown(
         .stApp *, .stApp *::before, .stApp *::after {
             animation:none!important; transition:none!important; scroll-behavior:auto!important; }
     }
+    
+    /* Mobile-safe form colors */
+    .stTextInput input, .stTextArea textarea, .stNumberInput input,
+    div[data-baseweb="input"] input, div[data-baseweb="textarea"] textarea {
+        color:#233e37!important;
+        -webkit-text-fill-color:#233e37!important;
+        caret-color:#233e37!important;
+        background-color:#ffffff!important;
+        opacity:1!important;
+        color-scheme:light!important;
+    }
+    .stTextInput input::placeholder, .stTextArea textarea::placeholder, .stNumberInput input::placeholder {
+        color:#7a8c84!important;
+        -webkit-text-fill-color:#7a8c84!important;
+        opacity:1!important;
+    }
+    .stTextInput label, .stTextArea label, .stNumberInput label, .stSelectbox label {
+        color:#233e37!important;
+    }
+    div[data-baseweb="select"] > div, div[data-baseweb="select"] span {
+        color:#233e37!important;
+        -webkit-text-fill-color:#233e37!important;
+        background-color:#ffffff!important;
+    }
+    input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus {
+        -webkit-text-fill-color:#233e37!important;
+        caret-color:#233e37!important;
+        transition:background-color 9999s ease-out 0s;
+    }
+
     </style>
     """),
     unsafe_allow_html=True,
