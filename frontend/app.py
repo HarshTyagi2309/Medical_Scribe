@@ -2121,9 +2121,7 @@ if (
 
     st.divider()
 
-    st.markdown(
-        ## "Doctor Correction"
-    )
+    st.markdown("## Doctor Correction")
 
     st.caption(
         "The consultation was already saved automatically. "
