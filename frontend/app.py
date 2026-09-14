@@ -112,7 +112,7 @@ def api_headers():
 
 st.set_page_config(
     page_title="MediNote",
-    page_icon="ÃƒÂ°Ã…Â¸Ã‚Â©Ã‚Âº",
+    page_icon="M",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -1096,7 +1096,7 @@ with st.sidebar:
         st.rerun()
 
     if st.button(
-        "ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã¢â‚¬â€œ  How to Use",
+        "How to Use",
         key="sidebar_usage_guide",
         type="primary" if st.session_state.workspace_view == "guide" else "secondary",
         use_container_width=True,
@@ -1105,7 +1105,7 @@ with st.sidebar:
         st.rerun()
 
     if st.button(
-        "ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã¢â‚¬Â¹  Consultation History",
+        "Consultation History",
         type=(
             "primary"
             if st.session_state.workspace_view == "history"
@@ -1152,7 +1152,7 @@ with st.sidebar:
     )
 
     if st.button(
-        "ÃƒÂ°Ã…Â¸Ã…Â¡Ã‚Âª  Sign out",
+        "Sign out",
         use_container_width=True,
     ):
         clear_auth_session()
@@ -1244,9 +1244,9 @@ with left_column, st.container(key="capture_panel"):
 
     input_tabs = st.tabs(
         [
-            "ÃƒÂ°Ã…Â¸Ã…Â½Ã¢â€žÂ¢ÃƒÂ¯Ã‚Â¸Ã‚Â Hands-Free",
-            "ÃƒÂ°Ã…Â¸Ã…Â½Ã‚Â¤ Manual Record",
-            "ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã‚Â Upload Audio",
+            "Hands-Free",
+            "Manual Record",
+            "Upload Audio",
         ]
     )
 
@@ -1626,7 +1626,7 @@ with left_column, st.container(key="capture_panel"):
     # ========================================================
 
     analyze_button = st.button(
-        "ÃƒÂ¢Ã…â€œÃ‚Â¨ Analyze & Save Consultation",
+        "Analyze and Save Consultation",
         type="primary",
         use_container_width=True,
         disabled=(
@@ -1925,7 +1925,7 @@ with right_column, st.container(key="summary_panel"):
             for symptom in symptoms:
 
                 st.write(
-                    f"ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {symptom}"
+                    f"- {symptom}"
                 )
 
         else:
@@ -2009,7 +2009,7 @@ with right_column, st.container(key="summary_panel"):
                 else:
 
                     st.write(
-                        f"ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {medicine}"
+                        f"- {medicine}"
                     )
 
         else:
@@ -2040,7 +2040,7 @@ with right_column, st.container(key="summary_panel"):
             for test in recommended_tests:
 
                 st.write(
-                    f"ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {test}"
+                    f"- {test}"
                 )
 
         else:
@@ -2071,7 +2071,7 @@ with right_column, st.container(key="summary_panel"):
             for instruction in doctor_instructions:
 
                 st.write(
-                    f"ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {instruction}"
+                    f"- {instruction}"
                 )
 
         else:
@@ -2122,7 +2122,7 @@ if (
     st.divider()
 
     st.markdown(
-        "## ÃƒÂ¢Ã…â€œÃ‚ÂÃƒÂ¯Ã‚Â¸Ã‚Â Doctor Correction"
+        ## "Doctor Correction"
     )
 
     st.caption(
@@ -2135,7 +2135,7 @@ if (
     if not st.session_state.edit_mode:
 
         if st.button(
-            "ÃƒÂ¢Ã…â€œÃ‚ÂÃƒÂ¯Ã‚Â¸Ã‚Â Edit Saved Record",
+            "Edit Saved Record",
             use_container_width=True,
         ):
 
@@ -2400,7 +2400,7 @@ if (
 
                 save_correction = (
                     st.form_submit_button(
-                        "ÃƒÂ°Ã…Â¸Ã¢â‚¬â„¢Ã‚Â¾ Save Correction",
+                        "Save Correction",
                         type="primary",
                         use_container_width=True,
                     )
@@ -2639,7 +2639,7 @@ with history_col2:
     st.write("")
 
     refresh_history = st.button(
-        "ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ¢â‚¬Å¾ Refresh",
+        "Refresh",
         use_container_width=True,
     )
 
@@ -2722,8 +2722,8 @@ if backend_online and MEDICAL_SCRIBE_API_KEY:
 
 
                     title = (
-                        f"{patient_name} ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ "
-                        f"{patient_id} ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ "
+                        f"{patient_name} - "
+                        f"{patient_id} - "
                         f"{date} {time}"
                     )
 
