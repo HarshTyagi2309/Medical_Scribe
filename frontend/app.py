@@ -59,7 +59,7 @@ def get_fastapi_url():
     except Exception:
         pass
 
-    return "http://127.0.0.1:8001"
+    return "http://127.0.0.1:8000"
 
 
 FASTAPI_URL = get_fastapi_url()
@@ -234,6 +234,7 @@ def check_inactivity_timeout():
 # ============================================================
 
 def reset_consultation():
+    st.session_state["audio_widget_version"] = st.session_state.get("audio_widget_version", 0) + 1
 
     auth_keys = {
         "authenticated",
@@ -1338,6 +1339,7 @@ with left_column, st.container(key="capture_panel"):
         manual_audio = st.audio_input(
             "Record consultation",
             sample_rate=16000,
+            key=f"manual_audio_{st.session_state.get('audio_widget_version', 0)}",
         )
 
 
@@ -1359,6 +1361,7 @@ with left_column, st.container(key="capture_panel"):
                 "ogg",
                 "webm",
             ],
+            key=f"uploaded_audio_{st.session_state.get('audio_widget_version', 0)}",
         )
 
 
@@ -3012,4 +3015,3 @@ st.caption(
     "AI-generated clinical information must be reviewed and verified by an "
     "authorized healthcare professional before clinical use."
 )
-
